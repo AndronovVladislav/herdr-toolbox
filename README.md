@@ -7,4 +7,4 @@ Independent mods for Herdr.app:
 - [Spaces and Agents](mods/spaces-agents/) — navigate spaces and active agents.
 - [Тактик](mods/taktik/README.md) — a sidebar focus timer with two ASCII displays.
 
-Copy the desired mod to the Herdr.app mods directory. For Spaces and Agents with the timer, see the [example layout](layouts/main-spaces-agents.json). Gitview has its own installer. No user state is required.
+For the complete workspace, follow the [gallery recipe](RECIPE.md). The [Toolbox layout](layouts/herdr-toolbox.json) uses the sidebar modules; Gitview and Snippets open on demand. Individual modules can still be installed separately.

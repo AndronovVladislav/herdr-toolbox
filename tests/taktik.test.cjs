@@ -97,7 +97,7 @@ test('reset abandons a running or paused interval, not the round or history', as
 });
 
 test('layout places Taktik last in the sidebar', () => {
-  const layout = JSON.parse(readFileSync(resolve(__dirname, '../layouts/main-spaces-agents.json')));
+  const layout = JSON.parse(readFileSync(resolve(__dirname, '../layouts/herdr-toolbox.json')));
   const items = layout.children.find(n => n.id === 'sidebar').children;
   const i = items.findIndex(n => n.content?.mod === 'taktik');
   assert.equal(items[i - 1]?.id, 'sidebar-lists');
