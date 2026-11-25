@@ -1,0 +1,64 @@
+{
+  "id": "root",
+  "type": "row",
+  "children": [
+    {
+      "id": "sidebar",
+      "type": "column",
+      "size": {
+        "px": 268
+      },
+      "children": [
+        {
+          "id": "sidebar-lists",
+          "type": "block",
+          "content": {
+            "mod": "spaces-agents"
+          },
+          "size": {
+            "weight": 1
+          }
+        },
+        {
+          "id": "taktik",
+          "type": "block",
+          "content": {
+            "mod": "taktik"
+          },
+          "size": {
+            "px": 180
+          }
+        }
+      ]
+    },
+    {
+      "id": "workspace",
+      "type": "column",
+      "size": {
+        "weight": 1
+      },
+      "children": [
+        {
+          "id": "tabs",
+          "type": "block",
+          "content": {
+            "mod": "tabs"
+          },
+          "size": {
+            "px": 42
+          }
+        },
+        {
+          "id": "main",
+          "type": "block",
+          "content": {
+            "tab": "active"
+          },
+          "size": {
+            "weight": 1
+          }
+        }
+      ]
+    }
+  ]
+}

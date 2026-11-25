@@ -1,0 +1,5 @@
+{
+  "place": "none",
+  "title": "Snippets",
+  "overlay": { "kind": "dialog", "width": 480, "height": 360 }
+}

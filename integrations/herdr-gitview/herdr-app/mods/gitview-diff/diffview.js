@@ -1,0 +1,344 @@
+// The diff, as herdr-gitview renders it for its TUI (syntax colors, red/green
+// tints, word emphasis, folds, line numbers), plus the review notes as cards
+// under the lines they're about and the note composer under a selection.
+// Rows in, elements out; the pane passes the handlers.
+
+import { div } from "gpui-kit";
+import { h_flex, v_flex, Textarea } from "gpui-base";
+import { iconButton, noteLines } from "./chrome.js";
+import { unzoom } from "./zoom.js";
+
+export const ROW = 18;
+const NOTE_LINE = 16;
+export const COMPOSER = 104;
+
+// Diff rows, note cards and the composer in display order. A card follows
+// the last row of its range (new-side numbers). Whole-file notes and notes
+// without a visible anchor go first. The composer follows its row, or those
+// notes when it has no visible anchor. A cut diff ends
+// with {cut: rows}.
+export function displayRows(diff, notes, composerAfter) {
+  const out = [];
+  const visible = new Set(diff.rows.map((r) => r.n));
+  const oldVisible = new Set(diff.rows.map((r) => r.o));
+  const pending = [];
+  for (const note of notes) {
+    if (note.end > 0 && (note.oldSide ? oldVisible : visible).has(note.end)) pending.push(note);
+    else out.push({ note });
+  }
+  if (composerAfter === -1) out.push({ composer: true });
+  diff.rows.forEach((row, i) => {
+    out.push({ row, index: i });
+    for (const n of pending) if (n.end === (n.oldSide ? row.o : row.n)) out.push({ note: n });
+    if (i === composerAfter) out.push({ composer: true });
+  });
+  // The engine sends 5 000 rows at most: say where it stopped.
+  if (diff.truncated) out.push({ cut: diff.rows.length });
+  return out;
+}
+
+// Notes and the composer span both columns, immediately below their anchor.
+export function splitRows(diff, layout, notes, composerAfter) {
+  const out = [], oldNotes = new Map(), newNotes = new Map();
+  const oldVisible = new Set(diff.rows.map(r => r.o)), newVisible = new Set(diff.rows.map(r => r.n));
+  for (const note of notes) {
+    if (!note.end || !(note.oldSide ? oldVisible : newVisible).has(note.end)) out.push({ note });
+    else {
+      const atLine = note.oldSide ? oldNotes : newNotes;
+      if (!atLine.has(note.end)) atLine.set(note.end, []);
+      atLine.get(note.end).push({ note });
+    }
+  }
+  if (composerAfter === -1) out.push({ composer: true });
+  for (const { left, right } of layout.lines) {
+    if (left !== null && diff.rows[left].k === "fold") out.push({ row: diff.rows[left], index: left });
+    else out.push({ pair: true, left, right });
+    for (const card of oldNotes.get(diff.rows[left]?.o) ?? []) out.push(card);
+    for (const card of newNotes.get(diff.rows[right]?.n) ?? []) out.push(card);
+    if (composerAfter != null && composerAfter >= 0 && (composerAfter === left || composerAfter === right)) out.push({ composer: true });
+  }
+  if (diff.truncated) out.push({ cut: diff.rows.length });
+  return out;
+}
+
+export function containsIndex(item, index) {
+  return index != null && (item.index === index || (item.pair && (item.left === index || item.right === index)));
+}
+
+export function rowSize(item) {
+  if (item.composer) return COMPOSER;
+  if (!item.note) return ROW;
+  return 30 + NOTE_LINE * item.note.text.split("\n").length + 8;
+}
+
+// The engine's tint roles (`@ins`, …) and marker colors, in the app's theme:
+// the diff follows any theme, light or dark.
+function color(c, t) {
+  switch (c) {
+    case "red": return t.ansi1;
+    case "green": return t.ansi2;
+    case "@ins": return `${t.ansi2}26`;
+    case "@del": return `${t.ansi1}26`;
+    case "@ins_emph": return `${t.ansi2}5c`;
+    case "@del_emph": return `${t.ansi1}5c`;
+    case "@gutter": return t.dim;
+    case "@fold": return t.raised;
+    case "@fold_fg": return t.muted;
+    default: return c;
+  }
+}
+
+// ---- legible text on tinted rows -------------------------------------------
+// The syntax colors are gitview's (One Dark / One Light) and the tints are
+// the theme's own, so a dim color (a comment) can vanish on a green or red
+// line in some themes. A span's color that doesn't reach MIN_CONTRAST on
+// what's really behind it is lifted toward the theme's foreground just
+// enough; colors that already read keep their hue.
+const MIN_CONTRAST = 3.5;
+const legible = new Map();
+
+function rgba(hex) {
+  const h = String(hex).replace("#", "");
+  if (!/^[0-9a-f]{6}([0-9a-f]{2})?$/i.test(h)) return null;
+  const n = (i) => parseInt(h.slice(i, i + 2), 16);
+  return [n(0), n(2), n(4), h.length === 8 ? n(6) / 255 : 1];
+}
+
+// `top` (maybe translucent) over an opaque `under`.
+function over(top, under) {
+  const a = top[3];
+  return [0, 1, 2].map((i) => top[i] * a + under[i] * (1 - a)).concat(1);
+}
+
+function luminance(c) {
+  const f = (x) => {
+    x /= 255;
+    return x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]);
+}
+
+function contrast(a, b) {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+const hex = (c) => `#${c.slice(0, 3).map((x) => Math.round(x).toString(16).padStart(2, "0")).join("")}`;
+
+// `fg` as drawn on the layers in `behind` (bottom first, over t.background).
+function readable(fg, behind, t) {
+  const key = `${fg}|${behind.join(",")}|${t.background}|${t.foreground}`;
+  if (legible.has(key)) return legible.get(key);
+  let out = fg;
+  const f = rgba(fg), base = rgba(t.background), ink = rgba(t.foreground);
+  if (f && base && ink) {
+    const bg = behind.map(rgba).filter(Boolean).reduce((under, top) => over(top, under), base);
+    let c = f;
+    for (let step = 1; step <= 20 && contrast(c, bg) < MIN_CONTRAST; step++) c = [0, 1, 2].map((i) => f[i] + (ink[i] - f[i]) * step / 20).concat(1);
+    out = c === f ? fg : hex(c);
+  }
+  legible.set(key, out);
+  return out;
+}
+
+// An invisible probe: ten "0"s in the diff's font (inherited here). It
+// reports one column's width in layout px (its measured width over ten);
+// `report(col, cx)` is called again on a font, size or zoom change.
+export function columnProbe(report) {
+  return div().absolute().top_0().left_0().opacity(0).flex_none().child("0".repeat(10)).on_size_change((size, cx) => report(unzoom(size.width) / 10, cx));
+}
+
+// The columns a glyph draws in a monospace font: most are one, East Asian
+// wide / full-width and emoji are two. A rough range test (no Unicode
+// tables): enough to keep a line of them from being cut on the right.
+function glyphColumns(cp) {
+  const wide =
+    (cp >= 0x1100 && cp <= 0x115f) || // Hangul Jamo
+    cp === 0x2329 || cp === 0x232a ||
+    (cp >= 0x2e80 && cp <= 0x303e) || // CJK radicals, Kangxi, punctuation
+    (cp >= 0x3041 && cp <= 0x33ff) || // Hiragana..CJK symbols
+    (cp >= 0x3400 && cp <= 0x4dbf) || // CJK Ext A
+    (cp >= 0x4e00 && cp <= 0x9fff) || // CJK Unified
+    (cp >= 0xa000 && cp <= 0xa4cf) || // Yi
+    (cp >= 0xac00 && cp <= 0xd7a3) || // Hangul syllables
+    (cp >= 0xf900 && cp <= 0xfaff) || // CJK compatibility
+    (cp >= 0xfe10 && cp <= 0xfe19) || // vertical forms
+    (cp >= 0xfe30 && cp <= 0xfe6f) || // CJK compatibility forms
+    (cp >= 0xff00 && cp <= 0xff60) || // full-width forms
+    (cp >= 0xffe0 && cp <= 0xffe6) || // full-width signs
+    (cp >= 0x1f300 && cp <= 0x1faff) || // emoji and pictographs
+    (cp >= 0x20000 && cp <= 0x3fffd); // CJK Ext B and beyond
+  return wide ? 2 : 1;
+}
+
+// The display columns of a string: each code point's glyph columns summed.
+export function displayColumns(text) {
+  let n = 0;
+  for (const ch of text) n += glyphColumns(ch.codePointAt(0));
+  return n;
+}
+
+// The widest row in display columns (its spans' text summed): what the
+// sideways range is built from, straight from the data (tabs reach the
+// spans already expanded to spaces, so a code-point count is exact for
+// them). Folds and empty rows count 0.
+export function widestColumns(rows) {
+  let max = 0;
+  for (const row of rows) {
+    let cols = 0;
+    for (const [text] of row.s ?? []) cols += displayColumns(text);
+    if (cols > max) max = cols;
+  }
+  return max;
+}
+
+// ctx: {t, cursor, selection: [a, b] | null, focused, composer (TextareaState),
+// pending (the note being written), offsetX (sideways offset px),
+// onDown(index, event, cx), onMove(index, cx), onEditNote(note, cx), onDeleteNote(note, cx)}
+export function renderRow(item, ctx) {
+  const { t } = ctx;
+  if (item.note) return noteCard(item.note, ctx);
+  if (item.composer) return composer(ctx);
+  if (item.cut) return div().h(ROW).flex_none().px(14).text_color(t.dim).child(`diff cut at ${String(item.cut).replace(/\B(?=(\d{3})+(?!\d))/g, ",")} lines`);
+  if (item.pair) {
+    const cell = (side) => {
+      const i = item[side];
+      const box = div().flex_1().min_w(0).h(ROW).overflow_hidden();
+      return i === null ? box : box.child(codeRow(ctx.rows[i], i, ctx, side));
+    };
+    return h_flex().w_full().h(ROW).child(cell("left")).child(div().w(1).h(ROW).flex_none().bg(t.border)).child(cell("right"));
+  }
+  return codeRow(item.row, item.index, ctx, null);
+}
+
+function codeRow(row, index, ctx, side) {
+  const { t } = ctx;
+  const selected = ctx.selectedIndices ? ctx.selectedIndices.has(index) && (!side || side === ctx.activeSide)
+    : ctx.selection && index >= ctx.selection[0] && index <= ctx.selection[1];
+  const cursor = index === ctx.cursor && (!side || side === ctx.cursorSide) ? cursorTint(t, ctx.focused) : null;
+  const offset = ctx.offsetX ?? 0;
+  return h_flex()
+    .id(`d${index}${side ?? ""}`)
+    .relative()
+    .w_full()
+    .h(ROW)
+    .flex_none()
+    .overflow_hidden()
+    .when(row.k === "fold", (e) => e.cursor_pointer())
+    .when(Boolean(row.bg), (e) => e.bg(color(row.bg, t)))
+    .when(selected, (e) => e.bg(t.selection))
+    // The cursor: a faint wash of the text colour over the whole row (on top
+    // of a green or red row too) and a 2 px bar, both laid over the row so
+    // nothing moves. Painted before the text, so the text stays on top. The
+    // row tint, selection and bar stay in the visible width; only the text
+    // moves sideways.
+    .when(Boolean(cursor), (e) =>
+      e
+        .child(div().absolute().inset_0().bg(cursor))
+        .child(div().absolute().top_0().bottom_0().left_0().w(2).bg(ctx.focused ? t.accent : t.dim)))
+    .on_mouse_down("left", (e, cx) => ctx.onDown(index, e, cx, side))
+    .on_mouse_move((_e, cx) => ctx.onMove(index, cx))
+    // The text sits in a layer pushed left by the sideways offset, so the
+    // tail of a line wider than the pane comes into view; the row clips it.
+    // Note cards and the composer aren't in this layer, so they keep the
+    // pane's width.
+    .child(
+      h_flex()
+        .absolute()
+        .top_0()
+        .bottom_0()
+        .left(-offset)
+        .items_center()
+        .children(
+          row.s.map(([text, fg, bg]) => {
+            // A span tinted like its row is painted once: twice would stack the
+            // translucent tint (darker boxes behind the text).
+            const own = Boolean(bg) && !selected && bg !== row.bg;
+            const behind = [selected ? t.selection : row.bg && color(row.bg, t), cursor, own && color(bg, t)].filter(Boolean);
+            const content = side === "left" && row.k === "ctx" && fg === "@gutter" ? ` ${String(row.o).padStart(4)} ` : text;
+            const span = div().flex_none().child(content.replace(/ /g, "\u00a0"));
+            return span.when(Boolean(fg), (e) => e.text_color(readable(color(fg, t), behind, t))).when(own, (e) => e.bg(color(bg, t)));
+          }),
+        ),
+    );
+}
+
+// The cursor row's wash: the theme's text colour at 10% (6% when the pane
+// isn't focused), lighter on a dark theme and darker on a light one.
+function cursorTint(t, focused) {
+  return `${String(t.foreground).slice(0, 7)}${focused ? "1a" : "0f"}`;
+}
+
+function noteCard(note, ctx) {
+  const { t } = ctx;
+  return v_flex()
+    .id(`note-${note.id}`)
+    .w_full()
+    .flex_none()
+    .py(4)
+    .pl(44)
+    .pr(10)
+    .font_family(ctx.uiFont)
+    .child(
+      v_flex()
+        .rounded(8)
+        .border_1()
+        .border_color(t.accent)
+        .bg(t.raised)
+        .pl(10)
+        .pr(4)
+        .py(4)
+        .child(
+          h_flex()
+            .h(20)
+            .items_center()
+            .child(div().flex_1().text_size(11).text_color(t.accent).child(`note · ${noteLines(note, true)}`))
+            .when(Boolean(ctx.onEditNote), (e) => e.child(iconButton(t, `note-edit-${note.id}`, "edit", "Edit note; click or drag over lines to change the range", (cx) => ctx.onEditNote(note, cx), { size: 18 })))
+            .child(iconButton(t, `note-x-${note.id}`, "x", "Delete note", (cx) => ctx.onDeleteNote(note, cx), { size: 18 })),
+        )
+        .children(note.text.split("\n").map((l) => div().h(NOTE_LINE).text_size(12).text_color(t.foreground).truncate().child(l || " "))),
+    );
+}
+
+function composer(ctx) {
+  const { t } = ctx;
+  return v_flex()
+    .id("gitview-composer")
+    .w_full()
+    .h(COMPOSER)
+    .flex_none()
+    .py(4)
+    .pl(44)
+    .pr(10)
+    .font_family(ctx.uiFont)
+    .child(
+      v_flex()
+        .rounded(8)
+        .border_1()
+        .border_color(t.accent)
+        .bg(t.surface)
+        .px(10)
+        .py(6)
+        .gap(4)
+        .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+        .child(div().text_size(11).text_color(t.accent).child(`${ctx.pending.id ? "edit note" : "new note"} · ${noteLines(ctx.pending, true)} · ${ctx.pending.id ? "click/drag lines to move · " : ""}enter saves · esc cancels`))
+        .child(Textarea.new(ctx.composer).h(52).text_size(12).text_color(t.foreground)),
+    );
+}
+
+// The selection's anchor for a note: new-side numbers of the rows in
+// [a, b], and the TUI's snippet (marker + text, at most 40 lines).
+export function noteRange(diff, a, b, indices = null, side = null) {
+  const nums = [];
+  let snippet = "";
+  for (let i = a; i <= b; i++) {
+    if (indices && !indices.has(i)) continue;
+    const r = diff.rows[i];
+    if (!r || r.k === "fold") continue;
+    nums.push((side === "left" ? r.o : r.n ?? r.o) ?? 0);
+    if (r.m && snippet.split("\n").length <= 40) snippet += `${r.m}\n`;
+  }
+  const real = nums.filter((n) => n > 0);
+  if (!real.length) return null;
+  return { start: Math.min(...real), end: Math.max(...real), snippet };
+}
