@@ -39,4 +39,4 @@
 { "id": "taktik", "type": "block", "content": { "mod": "taktik" }, "size": { "px": 180 } }
 ```
 
-В `layouts/main-spaces-agents.json` блок уже добавлен. Заменять личную раскладку целиком не нужно.
+В `layouts/herdr-toolbox.json` блок уже добавлен. Заменять личную раскладку целиком не нужно.

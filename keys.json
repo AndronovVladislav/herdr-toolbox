@@ -1,0 +1,7 @@
+{
+  "global": {
+    "cmd-alt-up": "spaces-agents.prev",
+    "cmd-alt-down": "spaces-agents.next",
+    "cmd-shift-s": "mod.open:snippets"
+  }
+}
