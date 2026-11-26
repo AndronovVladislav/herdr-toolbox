@@ -13,14 +13,14 @@
 
 import { View, div } from "gpui-kit";
 import { v_flex, TextareaState } from "gpui-base";
-import { focused, notify, panes, props, shared, theme } from "herdr";
+import { focused, notify, panes, props, shared, theme, window } from "herdr";
 import { Tracer, event, run } from "./telemetry.js";
 import { endTerminal, gv, labelled, message, onArgs, verifyWorktree } from "./engine.js";
 import { diffArgs, isDark, sameFile, sameShown } from "./model.js";
 import { allowed, askIgnore, confirmDiscard, sendNotes, takeDiscard } from "./actions.js";
 import { answer, askIn, cursorIn, handoffIn, setIgnoredDirs, handoffs, liveView, notesKey, notesOf, setHandoff, setTreeMode, setView, treeMode, viewIn } from "./shared.js";
 import { diffPane, panelDiffPanes, panelState, herdrNvimPanes } from "./layout.js";
-import { Flash, Loads, commandLoop, debounced, followStamp, stampMoved, watch } from "./modkit.js";
+import { Flash, Loads, commandLoop, debounced, followStamp, restorePaneKeys, stampMoved, watch } from "./modkit.js";
 import { listPlacement } from "./placement.js";
 import { staleWhy } from "./notice.js";
 import { closeEditorOf, editorIn, editorState, liveEditor, quitEditor, setEditor } from "./editors.js";
@@ -134,7 +134,7 @@ export default class GitList extends View {
   showsFocus() {
     const has = this.handle.is_focused() || this.typing;
     if (!has) this.viaApp = false;
-    return has && Boolean(this.viaApp);
+    return has && (this.place.takesKeyboard || Boolean(this.viaApp));
   }
 
   // The tab whose diff pane this list drives.
@@ -1033,6 +1033,8 @@ export default class GitList extends View {
       tab: this.tab(),
       mode: this.mode,
       focused: this.handle.is_focused() || Boolean(this.typing),
+      windowActive: window()?.active ?? null,
+      inputActive: Boolean(this.typing),
       viaApp: Boolean(this.viaApp),
       body,
       spinner: this.loads.shown(),
@@ -1071,13 +1073,18 @@ export default class GitList extends View {
 
   draw(cx) {
     if (this.stale()) this.kick();
+    if (this.place.takesKeyboard) restorePaneKeys(this, cx, () => {
+      const f = focused();
+      if (!window()?.active || this.typing || this.afterFocus === "input" || !f?.pane || f.tab !== this.tab() || f.terminal) return null;
+      return panes().some(p => p.pane === f.pane && p.mod === "gitview") ? f.pane : null;
+    });
     const t = theme();
-    const focused = this.showsFocus();
+    const listFocused = this.showsFocus();
     const notes = this.notes();
     const mode = MODES[this.mode];
     this.tr.drew(() => this.traceFields());
     return this.place
-      .frame(v_flex().id("gitview").size_full().min_h(0).bg(t.background).text_color(t.foreground).text_size(13), t, focused)
+      .frame(v_flex().id("gitview").size_full().min_h(0).bg(t.background).text_color(t.foreground).text_size(13), t, listFocused)
       .track_focus(this.handle)
       .on_mouse_down("left", (_e, cx) => { this.focusHere(cx); cx.notify(); })
       .on_size_change((size, cx) => {
@@ -1099,7 +1106,7 @@ export default class GitList extends View {
       .child(mode.header(this, t, notes))
       .children(this.ctx?.source && this.ctx?.cwd ? [div().px(10).text_size(11).text_color(t.muted)
         .child(`${this.ctx.source}: ${this.ctx.on ? `${this.ctx.on}:` : ""}${this.work?.where.root ?? this.ctx.cwd}`)] : [])
-      .child(mode.body(this, t, focused, notes))
+      .child(mode.body(this, t, listFocused, notes))
       .children([mode.under?.(this, t)].filter(Boolean))
       .child(footer(t, { flash: this.flash.text, chips: chipsFor(this), width: this.width, onKeys: () => showKeys(this) }));
   }

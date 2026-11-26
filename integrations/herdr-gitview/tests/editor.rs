@@ -109,6 +109,30 @@ fn visual_open_resolves_quoted_command_and_worktree_file() {
 }
 
 #[test]
+fn zed_bundle_cli_receives_worktree_and_line_as_separate_arguments() {
+    let repo = common::fixture("visual-line");
+    let b = scratch("visual-line");
+    let cli = b.bin.join("Zed.app/Contents/MacOS/cli");
+    std::fs::create_dir_all(cli.parent().unwrap()).unwrap();
+    program(&cli, true);
+    common::write(&repo.dir, "two words.txt", "one\ntwo\n");
+    let out = common::gitview()
+        .args(["json", "visual", "--repo"])
+        .arg(&repo.dir)
+        .args(["--path", "two words.txt", "--line", "2"])
+        .env("GITVIEW_CONFIG_DIR", b.dir.join("cfg"))
+        .env("VISUAL", format!("'{}'", cli.display()))
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let reply: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(
+        reply["argv"],
+        json!([cli, repo.dir, repo.dir.join("two words.txt:2:1")])
+    );
+}
+
+#[test]
 fn configured_visual_editor_wins_with_or_without_visual_env() {
     let repo = common::fixture("configured-visual");
     let b = scratch("configured-visual");

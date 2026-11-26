@@ -27,6 +27,7 @@ export const layout = () => w.layout ?? null;
 export const run = (name, args) => { w.runs.push([name, args ?? null]); };
 export const notify = () => {};
 export const theme = () => ({});
+export const window = () => w.window ?? null;
 export const settings = () => ({});
 export const agents = () => [];
 export const appHome = () => "/tmp/gv-test-home";

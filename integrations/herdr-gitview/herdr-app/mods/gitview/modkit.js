@@ -3,7 +3,7 @@
 // command loop and key names. Shared (linked; install copies it).
 
 import { closeOverlay, focused, nextCommand, notify, panes, props, watchFolder } from "herdr";
-import { message } from "./engine.js";
+import { appCli, message } from "./engine.js";
 import { changedAt, ignoredDirs, stampChanged, stampOf } from "./shared.js";
 import { tracedCommand, Tracer, tracer } from "./telemetry.js";
 
@@ -386,6 +386,32 @@ export function oneShot(cx, work, name = "launcher") {
       tr.line("state", { done: name, ms: Date.now() - t0 });
       await tr.flush(); // closing ends this copy
       if (overlay) closeOverlay(overlay);
+    }
+  });
+}
+
+// tab.select and pane.focus can restore a mod pane's ring but leave its keys
+// on the window. Check once per mismatch, never once per frame. The launcher's
+// own short-lived overlay may still be closing; every other overlay wins.
+export function restorePaneKeys(view, cx, target, status = () => appCli(["status"])) {
+  const pane = view.handle.is_focused() ? null : target();
+  if (!pane) { view.keyRepair = null; return; }
+  if (view.keyRepair?.pane === pane) return;
+  const request = view.keyRepair = { pane };
+  const current = () => view.keyRepair === request && !view.handle.is_focused() && target() === pane;
+  cx.spawn(async (cx) => {
+    for (let i = 0; i < 12 && current(); i++) {
+      const s = await status();
+      if (!current() || s?.focused_pane !== pane || !Array.isArray(s.overlays)) return;
+      const overlays = s.overlays.filter(name => name !== "toast");
+      if (!overlays.length) {
+        view.handle.focus();
+        view.tr?.line("state", { keyboard: "restored" });
+        cx.notify();
+        return;
+      }
+      if (!overlays.every(name => name === "gitview-tab")) return;
+      await cx.sleep(80);
     }
   });
 }
