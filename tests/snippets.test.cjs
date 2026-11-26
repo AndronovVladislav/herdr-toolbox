@@ -12,7 +12,7 @@ function loadModule(apis = {}) {
   return vm.runInNewContext(source + '\n({ Snippets, searchSnippets })', { View: class {}, ...apis });
 }
 
-function picker() {
+function picker(storage = new Map(), exitCode = 0) {
   let terminal = 't1';
   const calls = [];
   const terminals = [{ address: 't1', state: 'live' }];
@@ -22,15 +22,16 @@ function picker() {
   };
   const closed = [];
   const { Snippets } = loadModule({
+    localStorage: { getItem: k => storage.get(k) ?? null, setItem: (k,v) => storage.set(k,v) },
     focused: () => ({ terminal }),
     terminals: () => terminals,
     props: () => ({ overlay: 'overlay' }),
     appHome: () => '/herdr',
     checking: () => true,
-    InputState: { new: () => ({ on() {}, focus() {} }) },
+    InputState: { new: () => ({ on() {}, focus() {}, value() { return ''; } }) },
     ScrollHandle: { new: () => ({}) },
     readTextFile: async (file) => files[file] ?? null,
-    exec: async (...args) => { calls.push(args); return { code: 0 }; },
+    exec: async (...args) => { calls.push(args); return { code: exitCode }; },
     closeOverlay: (id) => closed.push(id),
   });
   const view = new Snippets();
@@ -46,6 +47,31 @@ test('search__case_insensitive_fuzzy_match__prefers_prefix_and_ignores_non_match
   assert.deepEqual(Array.from(searchSnippets(files, ' CoM ')), [
     'COM.md', 'commit.md', 'precommit.md', 'cherry-or-merge.md',
   ]);
+});
+
+test('successful insert moves a snippet to the front across picker instances; failed send does not', async () => {
+  const storage = new Map();
+  function open(code) {
+    const p = picker(storage, code);
+    p.view.files = ['alpha.md', 'beta.md', 'commit.md'];
+    p.files['/herdr/snippets/beta.md'] = 'sample';
+    p.view.filter();
+    return p;
+  }
+  for (const file of ['commit.md', 'beta.md', 'commit.md']) {
+    const p = open(0);
+    await p.view.insert(file, p.cx);
+  }
+  const failed = open(1);
+  assert.deepEqual(Array.from(failed.view.rows), ['commit.md', 'beta.md', 'alpha.md']);
+  await failed.view.insert('beta.md', failed.cx);
+  assert.deepEqual(Array.from(open(0).view.rows), ['commit.md', 'beta.md', 'alpha.md']);
+});
+
+test('search ranks match quality before recency and ignores missing files', () => {
+  const { searchSnippets } = loadModule();
+  assert.deepEqual(Array.from(searchSnippets(['foo.md', 'food.md', 'fool.md', 'afoo.md'], 'foo',
+    ['removed.md', 'afoo.md', 'fool.md'])), ['foo.md', 'fool.md', 'food.md', 'afoo.md']);
 });
 
 test('insert__focus_moves_after_opening__pastes_to_original_terminal_without_submit', async () => {
