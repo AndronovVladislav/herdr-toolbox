@@ -20,6 +20,7 @@ export function restore(raw) {
 const left = (s, now) => s.deadline === null ? s.left : Math.max(0, Math.min(base[s.phase] + s.extra, s.deadline-now));
 export const planned = s => base[s.phase];
 export const canReset = s => s.deadline !== null || s.started !== null || s.extra > 0 || s.left !== planned(s);
+export const canResetCycle = s => canReset(s) || s.phase !== 'focus' || s.round !== 1 || s.lastFocus !== null;
 export const elapsed = (s, now) => planned(s) + s.extra - left(s, now);
 export function format(ms) {
   const seconds = Math.ceil(Math.max(0, ms)/1000);
@@ -49,6 +50,7 @@ export function step(state, now, action) {
   }
   let changedPhase = false;
   while (s.deadline !== null) {
+    if (action === 'reset-cycle' && now < s.deadline) break;
     const warningAt = s.deadline - (s.phase === 'focus' ? 5*M : M);
     if (!s.warned && now >= warningAt) {
       cue(s.phase === 'focus' ? 'focus-warning' : 'break-warning', warningAt);
@@ -67,6 +69,13 @@ export function step(state, now, action) {
       s = ready('focus', s.round%4+1, s.lastFocus);
       cue('focus-ready', end);
     }
+  }
+  if (action === 'reset-cycle') {
+    if (canResetCycle(s)) {
+      record('reset-cycle', now);
+      s = initial();
+    }
+    return { state:s, events, signal:null };
   }
   if (!changedPhase && action === 'extend' && s.phase === 'focus' && s.deadline !== null) {
     s = { ...s, extra: s.extra+5*M, deadline:s.deadline+5*M, warned:false };

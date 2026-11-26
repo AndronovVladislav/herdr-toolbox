@@ -1,17 +1,17 @@
 # Herdr Toolbox
 
-One workspace for a short coding session: pick a space, start a focus interval, insert a saved snippet and review your changes without leaving the window. Spaces and Agents and the ASCII timer stay in the sidebar. Snippets opens over the terminal; Gitview opens in a review tab.
+One workspace for a short coding session: pick a space, start a focus interval, insert a saved snippet and review your changes without leaving the window. Spaces and Agents stays in the sidebar. The optional ASCII timer is shown in the preview below. Snippets opens over the terminal; Gitview opens in a review tab.
 
 ![Herdr Toolbox](preview.png)
 
 ## What you see
 
-From left to right: a 268 px sidebar and the active workspace. The sidebar gives its available height to Spaces and Agents, then reserves 180 px for Taktik. The workspace has a 42 px tab strip and a pane below. Use the active Herdr theme. Give the timer's ASCII characters a monospaced font and center the visible drawing. In the review tab, display a diff beside the changed-file list; keep the sidebar visible.
+From left to right: a 268 px sidebar and the active workspace. The sidebar gives its available height to Spaces and Agents, reserving 180 px for Taktik only while it is visible. The workspace has a 42 px tab strip and a pane below. Use the active Herdr theme. Use Herdr’s current interface font throughout the timer and center each ASCII character in an equal-width cell. In the review tab, display a diff beside the changed-file list; keep the sidebar visible.
 
 ## How it behaves
 
 - Click a space to switch; right-click for its menu. Show agents with their space, using the theme's working, blocked, done or idle color. The navigation keys move to the previous or next agent in display order.
-- Click the timer to start or pause. A cycle has four 25-minute focus intervals; short breaks last five minutes, the fourth break lasts fifteen. A break starts automatically, but the next focus waits for a click. `+5` extends focus without moving the original target. `↺` resets only this interval. `◫` switches between the five sections and the recorder. In the narrow view use Option-click to switch and Shift-click to reset.
+- The timer starts hidden. Search for `taktik` in the command palette and choose **Тактик: показать / скрыть** to show or hide it without changing its clock. Click the timer to start or pause. A cycle has four 25-minute focus intervals; short breaks last five minutes, the fourth break lasts fifteen. A break starts automatically, but the next focus waits for a click. `+5` extends focus without moving the original target. `↺` resets only this interval. Clicking the round counter resets the cycle to idle focus 1/4; both actions preserve the journal. `◫` switches between the five sections and the recorder. In the narrow view use Option-click to switch and Shift-click to reset.
 - In a terminal, open Snippets, filter by name and press Enter to insert the selected text into that terminal **without submitting it**. Escape closes the picker.
 - Open Gitview from a terminal in a Git checkout. Select a file to see its diff, press `b` to switch between unified and split, or `o` to open it in the visual editor. From an empty local file list, `o` opens just the project root. Opening the review tab alone does not stage, discard or commit anything.
 
@@ -30,7 +30,7 @@ From left to right: a 268 px sidebar and the active workspace. The sidebar gives
 
 ## Done when
 
-- The layout switches on and back off, and `herdr-app status` shows no errors. Switching spaces leaves the timer visible.
+- The layout switches on and back off, and `herdr-app status` shows no errors. The default sidebar has no timer or placeholder. Toggle it from the palette twice: it appears below the spaces, then gives back its space.
 - Start focus and pause it. Switch its face: the remaining time and round stay unchanged.
 - Insert the example snippet into a disposable terminal: its text appears and does not execute.
 - Open the review tab from a disposable Git checkout with one changed line. The file list and diff agree, and the terminal is still there when you leave the review tab.

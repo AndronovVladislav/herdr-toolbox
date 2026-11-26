@@ -21,6 +21,7 @@
         },
         {
           "id": "taktik",
+          "hidden": true,
           "type": "block",
           "content": {
             "mod": "taktik"
