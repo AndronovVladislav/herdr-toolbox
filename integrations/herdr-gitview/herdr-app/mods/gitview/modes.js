@@ -11,7 +11,8 @@ import { div } from "gpui-kit";
 import { commitBox, filesHeader, subHeader } from "./chrome.js";
 import { renderRow, rowSize } from "./listview.js";
 import { COMMIT_ROW, commitRow, loadLog, logMove, openCommit, openLog, toggleLogFilter } from "./history.js";
-import { treeMode } from "./shared.js";
+import { sameFile } from "./model.js";
+import { cursorIn, treeMode } from "./shared.js";
 import { editorLabel, openVisual } from "./nvim.js";
 
 // Enter's label: the editor it starts there (nvim, vim, open, …).
@@ -78,8 +79,10 @@ export const MODES = {
       { caps: ["x"], label: "discard", rank: 4, when: worktree, on: { x: (v, cx) => v.rowAction("discard", null, cx) } },
       { caps: ["o"], label: "open in visual editor", on: { o: (v, cx) => {
         const row = v.work?.row();
-        if (row?.kind === "file") openVisual(v.work.viewFor(row), cx);
-        else if (v.work && !v.work.files()) openVisual(v.work.where, cx);
+        if (row?.kind === "file") {
+          const view = v.work.viewFor(row), cursor = cursorIn(v.tab());
+          openVisual({ ...view, line: sameFile(cursor, view) ? cursor.line : null }, cx);
+        } else if (v.work && !v.work.files()) openVisual(v.work.where, cx);
       } } },
       { caps: ["i"], label: "ignore", rank: 9, when: worktree, on: { i: (v, cx) => v.ignoreRow(v.work?.row(), cx) } },
       { caps: ["c"], label: "commit", rank: 5, when: worktree, on: { c: (v) => worktree(v) && v.commitInput.focus() } },

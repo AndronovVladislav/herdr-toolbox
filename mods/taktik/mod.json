@@ -1,1 +1,7 @@
-{ "place": "none", "title": "Тактик" }
+{
+  "place": "none",
+  "title": "Тактик",
+  "palette": [
+    { "title": "Тактик: показать / скрыть", "command": "layout.toggle", "args": { "id": "taktik" }, "words": "taktik timer pomodoro таймер фокус" }
+  ]
+}

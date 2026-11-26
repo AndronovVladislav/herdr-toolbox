@@ -1,6 +1,7 @@
 // The diff pane's rows as drawn (diffview.js displayRows): where notes and
 // the composer go.
 import { world, reset } from "./stub.mjs";
+const { TextareaState } = await import("gpui-base");
 import { test } from "node:test";
 import assert from "node:assert/strict";
 const { displayRows, displayColumns, widestColumns } = await import("../mods/gitview-diff/diffview.js");
@@ -11,6 +12,9 @@ test("o opens the project and shown file without handing off the diff pane", asy
   world.files["/tmp/gv-test-home/mods/gitview/config.json"] = '{"bin":"gitview"}';
   const view = new GitDiff();
   view.view = { root: "/repo", path: "with spaces.txt", on: null };
+  view.diffView = view.view;
+  view.diff = { rows: [{ k: "ctx", n: 40 }, { k: "add", n: 41 }] };
+  view.cursor = 1;
   const calls = [];
   world.exec = (cmd, args) => {
     calls.push([cmd, args]);
@@ -21,12 +25,38 @@ test("o opens the project and shown file without handing off the diff pane", asy
   const pending = [];
   assert.equal(view.key({ key: "o", modifiers: {} }, { spawn: (task) => pending.push(task()) }), true);
   await Promise.all(pending);
-  assert.deepEqual(calls[0][1].slice(-6), ["json", "visual", "--repo", "/repo", "--path", "with spaces.txt"]);
+  assert.deepEqual(calls[0][1].slice(-8), ["json", "visual", "--repo", "/repo", "--path", "with spaces.txt", "--line", "41"]);
   assert.deepEqual(calls[1], ["/bin/editor", ["--reuse", "/repo", "/repo/with spaces.txt"]]);
   assert.equal(calls.length, 2);
 });
 
+test("Enter saves without the native newline at the caret; Shift+Enter keeps editing", (t) => {
+  const view = new GitDiff();
+  const before = "first\n\nПривет 👋", after = " world\nlast";
+  let submit;
+  const ready = new Error("composer initialized");
+  t.mock.method(TextareaState, "new", () => ({
+    value: () => before + "\n" + after,
+    selected_range: () => ({ start: before.length + 1, end: before.length + 1 }),
+    on(event, fn) { if (event === "submit") { submit = fn; throw ready; } },
+  }));
+  assert.throws(() => view.init({}, { timer: { every() {} }, focus_handle() {} }), ready);
+  const calls = [];
+  view.saveNote = text => calls.push(text);
+  submit({ shift: false }, {});
+  assert.deepEqual(calls, [before + after]);
+  submit({ shift: true }, {});
+  assert.equal(calls.length, 1);
+});
+
 const rows = [{ k: "ctx", o: 1, n: 1 }, { k: "del", o: 2, n: null }, { k: "ins", o: null, n: 2 }, { k: "ctx", o: 3, n: 3 }];
+test("split maps the second removed line to its paired worktree line", () => {
+  const v = new GitDiff();
+  v.split = true;
+  v.diff = { rows: [{ k: "del", o: 10 }, { k: "del", o: 11 }, { k: "add", n: 30 }, { k: "add", n: 31 }] };
+  assert.equal(v.lineAt(1), 31);
+});
+
 const shape = (out) => out.map((x) => (x.note ? `note:${x.note.text}` : x.composer ? "composer" : `row:${x.index}`));
 
 const { addNote, notesOf, removeNotes } = await import("../mods/gitview/shared.js");

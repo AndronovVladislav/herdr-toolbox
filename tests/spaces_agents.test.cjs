@@ -31,11 +31,11 @@ function renderRows(active, tree = null, count = 1, activeSpace = 'one', focusSp
     View: class {}, h_flex: element, v_flex: element, div: element, svg: element,
     agents: () => Array.from({ length: count }, (_, index) => ({
       address: index ? `agent-${index}` : 'agent', pane: `pane-${index}`, space: 'one',
-      title: index ? `Task ${index}` : 'Task', status: 'working',
+      pane_name: index ? `Task ${index}` : 'Task', status: 'working',
     })),
     terminals: () => [], spaces: () => [space, empty], machines: () => [],
     focused: () => focusSpace === null ? null : ({ agent: active, space: focusSpace }), shared: () => ({}),
-    run: (...args) => commands.push(args), localStorage: { setItem: (key, value) => { saved[key] = value; } },
+    openOverlay: menu => commands.push(['menu', menu]), run: (...args) => commands.push(args), localStorage: { setItem: (key, value) => { saved[key] = value; } },
   });
   const view = new Spaces();
   Object.assign(view, {
@@ -171,38 +171,35 @@ test('space_drag__double_click_count__does_not_fold_destination', () => {
 
 test('groups primary agents by space and sorts without dropping duplicate names', () => {
   const list = [
-    { address: 'a', space: 'one', title: 'Zulu' },
-    { address: 'b', space: 'one', title: 'Alpha' },
-    { address: 'c', space: 'one', title: 'Alpha' },
-    { address: 'child', space: 'one', title: 'Child' },
-    { address: 'other', space: 'two', title: 'Other' },
+    { address: 'a', space: 'one', pane_name: 'Zulu' },
+    { address: 'b', space: 'one', pane_name: 'Alpha' },
+    { address: 'c', space: 'one', pane_name: 'Alpha' },
+    { address: 'child', space: 'one', pane_name: 'Child' },
+    { address: 'other', space: 'two', pane_name: 'Other' },
   ];
   const terminals = [{ address: 'child', parent: 'a' }];
   assert.deepEqual(Array.from(agentsForSpace(list, terminals, 'one'), a => a.address), ['b', 'c', 'a']);
   assert.deepEqual(Array.from(agentsForSpace(list, terminals, 'empty')), []);
 });
 
-test('Codex uses a custom tab name and falls back to its terminal title', () => {
-  const agent = { address: 'a', tab: 'tab-1', title: 'Working', program: { key: 'codex', name: 'Codex' } };
-  assert.equal(agentName(agent, [{ id: 'tab-1', named: true, name: 'Тема сессии' }]), 'Тема сессии');
-  assert.equal(agentName(agent, [{ id: 'tab-1', named: false, name: '1' }]), 'Working');
-  assert.equal(agentName(agent, [{ id: 'tab-1', named: true, name: 'Codex' }]), 'Working');
-  assert.equal(agentName({ ...agent, program: { key: 'claude', name: 'Claude' } }, [{ id: 'tab-1', named: true, name: 'Тема' }]), 'Working');
+test('manual pane name wins; session and tab titles never supply agent names', () => {
+  for (const name of ['Codex', 'Pi', 'Claude Code']) {
+    const a = { address: 't3', title: 'Changing session title', tab_name: 'Named tab', program: { name } };
+    assert.equal(agentName(a), name);
+    assert.equal(agentName({ ...a, pane_name: 'π - Review | API' }), 'π - Review | API');
+    assert.equal(agentName({ ...a, pane_name: '' }), name);
+  }
 });
 
-test('Codex displays the session name before the terminal separator', () => {
-  const agent = { address: 'a', tab: 'tab-1', space_name: 'backend', title: 'Тема | backend', program: { key: 'codex', name: 'Codex' } };
-  assert.equal(agentName(agent), 'Тема');
-  assert.equal(agentName({ ...agent, title: 'Example | demo' }), 'Example');
-  assert.equal(agentName({ ...agent, title: 'Тема без разделителя' }), 'Тема без разделителя');
-  assert.equal(agentName(agent, [{ id: 'tab-1', named: true, name: 'Другая тема | backend' }]), 'Другая тема');
-});
-
-test('Pi shows the session name without the terminal title prefix and folder', () => {
-  const agent = { address: 'a', tab: 'tab-1', title: 'π - backend', program: { key: 'pi', name: 'Pi' } };
-  assert.equal(agentName(agent), 'Pi');
-  assert.equal(agentName({ ...agent, title: '⠙ π - Разбор - новая итерация - backend' }), 'Разбор - новая итерация');
-  assert.equal(agentName(agent, [{ id: 'tab-1', named: true, name: 'Моя сессия' }]), 'Моя сессия');
+test('right click targets the clicked pane or space without focusing it', () => {
+  const elements = renderRows('agent', null, 2);
+  for (const [id, type, target] of [['agent-agent-1','pane',{pane:'pane-1', terminal:'agent-1'}], ['space-empty','space',{id:'empty'}]]) {
+    elements.find(el => el.id?.[0] === id).on_mouse_downright[1]();
+    const props = elements.commands.at(-1)[1].props;
+    assert.equal(props.tab, type);
+    assert.deepEqual({...props.target}, target);
+  }
+  assert.equal(elements.commands.length, 2);
 });
 
 test('agent navigation follows space and agent display order, excluding subagents', () => {
@@ -211,10 +208,10 @@ test('agent navigation follows space and agent display order, excluding subagent
     { w: { id: 'local', machine: null, tabs: [] } },
   ];
   const agents = [
-    { address: 'z', space: 'local', title: 'Z' },
-    { address: 'a', space: 'local', title: 'A' },
-    { address: 'child', space: 'local', title: 'Child' },
-    { address: 'remote', space: 'remote', title: 'Remote' },
+    { address: 'z', space: 'local', pane_name: 'Z' },
+    { address: 'a', space: 'local', pane_name: 'A' },
+    { address: 'child', space: 'local', pane_name: 'Child' },
+    { address: 'remote', space: 'remote', pane_name: 'Remote' },
   ];
   assert.deepEqual(Array.from(agentOrder(rows, agents, [{ address: 'child', parent: 'a' }])), ['a', 'z', 'remote']);
 });

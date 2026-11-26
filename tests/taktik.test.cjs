@@ -96,10 +96,45 @@ test('reset abandons a running or paused interval, not the round or history', as
   assert.equal(r.state.lastFocus, 25*M);
 });
 
+test('cycle reset returns running, paused and waiting rounds to idle focus one without an end or signal', async () => {
+  const { initial, step, canResetCycle } = await api;
+  const focus = step({...initial(), round:4},0,'toggle').state;
+  const extended = step(focus,10*M,'extend').state;
+  const rest = step(extended,30*M).state;
+  const paused = step(rest,32*M,'toggle').state;
+  for(const s of [extended, rest, paused, {...initial(), round:2}]) {
+    assert.ok(canResetCycle(s));
+    const result = step(s,s.phase==='focus'?12*M:32*M,'reset-cycle');
+    assert.deepEqual(result.state,initial());
+    assert.equal(result.signal,null);
+    assert.deepEqual(result.events.map(e=>e.type),['reset-cycle']);
+    assert.equal(result.events[0].round,s.round);
+  }
+  assert.deepEqual(step(paused,99*M,'reset-cycle').events.map(e=>e.elapsed),[2*M]);
+  assert.equal(canResetCycle(initial()),false);
+  assert.deepEqual(step(initial(),0,'reset-cycle').events,[]);
+});
+
+test('cycle reset after a missed deadline preserves completed boundaries without playing stale cues', async () => {
+  const { initial, step } = await api;
+  const focus=step(initial(),0,'toggle').state;
+  const r=step(focus,26*M,'reset-cycle');
+  assert.deepEqual(r.state,initial());
+  assert.equal(r.signal,null);
+  assert.deepEqual(r.events.filter(e=>e.type==='end').map(e=>e.at),[25*M]);
+  assert.equal(r.events.at(-1).elapsed,M);
+  assert.equal(r.events.at(-1).phase,'short');
+  assert.ok(r.events.filter(e=>e.type==='signal').every(e=>e.deliveredAt===null));
+});
+
 test('layout places Taktik last in the sidebar', () => {
   const layout = JSON.parse(readFileSync(resolve(__dirname, '../layouts/herdr-toolbox.json')));
   const items = layout.children.find(n => n.id === 'sidebar').children;
   const i = items.findIndex(n => n.content?.mod === 'taktik');
   assert.equal(items[i - 1]?.id, 'sidebar-lists');
   assert.equal(i, items.length - 1);
+  assert.equal(items[i].hidden, true);
+  const manifest = JSON.parse(readFileSync(resolve(__dirname, '../mods/taktik/mod.json')));
+  assert.equal(manifest.place, 'none');
+  assert.ok(manifest.palette.some(entry => entry.command === 'layout.toggle' && entry.args.id === items[i].id));
 });

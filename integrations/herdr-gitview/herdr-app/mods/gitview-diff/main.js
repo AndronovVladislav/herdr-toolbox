@@ -15,14 +15,14 @@
 
 import { View, div } from "gpui-kit";
 import { h_flex, v_flex, TextareaState } from "gpui-base";
-import { focused, props, setShared, settings, shared, spaces, theme } from "herdr";
+import { focused, props, setShared, settings, shared, spaces, theme, window } from "herdr";
 import { Tracer, run } from "./telemetry.js";
 import { gv, message } from "./engine.js";
 import { diffArgs, isDark, sameFile, sameShown } from "./model.js";
 import { allowed, confirmDiscard, sendNotes, takeDiscard } from "./actions.js";
 import { addNote, answerIn, ask, cursorIn, liveView, notesKey, notesOf, previewOff, removeNotes, setCursor, setPreviewOff, updateNote, viewIn } from "./shared.js";
 import { diffPane } from "./layout.js";
-import { Flash, Loads, commandLoop, debounced, keyEvent, keyName, takeKeyboard } from "./modkit.js";
+import { Flash, Loads, commandLoop, debounced, keyEvent, keyName, restorePaneKeys, takeKeyboard } from "./modkit.js";
 import { panePlacement } from "./placement.js";
 import { editorLabel, knowEditor, openNvim, openVisual } from "./nvim.js";
 import { Scroller } from "./scroller.js";
@@ -60,7 +60,7 @@ const KEYS = [
   { caps: ["v"], label: "select", rank: 5, when: diffShown, on: { v: inDiff((v) => { v.anchor = v.anchor === null ? v.cursor : null; }) } },
   { caps: ["a"], label: "note", rank: 6, when: diffShown, on: { a: inDiff((v) => v.annotate()) } },
   { caps: ["enter"], label: (v) => editorLabel(v.view?.root, v.view?.on), rank: 3, on: { enter: (v, cx) => v.enterKey(cx), e: (v, cx) => v.edit(null, cx) } },
-  { caps: ["o"], label: "open in visual editor", when: (v) => Boolean(v.view && !v.view.on), on: { o: (v, cx) => v.view && openVisual(v.view, cx) } },
+  { caps: ["o"], label: "open in visual editor", when: (v) => Boolean(v.view && !v.view.on), on: { o: (v, cx) => v.openVisualAtCursor(cx) } },
   { caps: ["J", "K"], label: "next / previous file", rank: 7, on: { J: (v, cx) => v.nextFile(1, cx), K: (v, cx) => v.nextFile(-1, cx) } },
   { caps: ["x"], label: "discard", rank: 8, on: { x: (v, cx) => v.act("discard", cx) } },
   { caps: ["p"], label: "send notes", rank: 9, on: { p: (v, cx) => v.send(cx) } },
@@ -88,7 +88,14 @@ export default class GitDiff extends View {
     this.col = COL_FALLBACK; // one column's width (px), until the probe measures it
     this.maxCols = 0; // the widest row in display columns (from the diff data)
     this.composer = TextareaState.new({ placeholder: "Note for the agent", rows: 3 });
-    this.composer.on("submit", (_e, cx) => this.saveNote(this.composer.value(), cx));
+    this.composer.on("submit", (event, cx) => {
+      if (event.shift) return;
+      // Herdr's textarea inserts LF before emitting submit. Its caret is in UTF-16 units.
+      const text = this.composer.value();
+      const { start, end } = this.composer.selected_range();
+      const inserted = start === end && start > 0 && text[start - 1] === "\n";
+      this.saveNote(inserted ? text.slice(0, start - 1) + text.slice(start) : text, cx);
+    });
     this.view = null; // what's shown (a view from the list), null: nothing
     this.seq = 0; // the stored view's seq and showing, as last seen
     this.showing = 0;
@@ -122,6 +129,12 @@ export default class GitDiff extends View {
   // This copy's pane (null: not yet in the app's lists).
   myPane() {
     return diffPane(this.tab())?.pane ?? null;
+  }
+
+  keyboardTarget() {
+    const f = focused();
+    if (!window()?.active || this.pendingNote || !f?.pane || f.tab !== this.tab() || f.terminal) return null;
+    return f.pane === this.myPane() ? f.pane : null;
   }
 
   // The keys here: the handle when the app's focus is on this pane, else
@@ -339,6 +352,12 @@ export default class GitDiff extends View {
   // The line under row i (a deleted line: the next line that's there).
   lineAt(i) {
     const rows = this.diff.rows;
+    if (this.split && rows[i]?.k === "del") {
+      const { lines, positions } = this.splitModel();
+      const at = positions[i];
+      for (let j = at; j < lines.length; j++) if (rows[lines[j].right]?.n) return rows[lines[j].right].n;
+      for (let j = at - 1; j >= 0; j--) if (rows[lines[j].right]?.n) return rows[lines[j].right].n;
+    }
     for (let j = i; j < rows.length; j++) if (rows[j]?.n) return rows[j].n;
     for (let j = i; j >= 0; j--) if (rows[j]?.n) return rows[j].n;
     return this.diff.first_change ?? 1;
@@ -449,6 +468,13 @@ export default class GitDiff extends View {
     if (this.inPreview()) return this.edit(this.cursorMoved ? null : 1, cx);
     if (this.diff.rows[this.cursor]?.k === "fold") return this.unfoldAll(cx);
     this.edit(null, cx);
+  }
+
+  openVisualAtCursor(cx) {
+    if (!this.view) return;
+    const line = sameFile(this.diffView, this.view) && this.diff.rows.length && (!this.inPreview() || this.cursorMoved)
+      ? this.lineAt(this.cursor) : null;
+    openVisual({ ...this.view, line }, cx);
   }
 
   edit(line = null, cx = null) {
@@ -674,6 +700,8 @@ export default class GitDiff extends View {
       tab: this.tab(),
       focused: this.handle.is_focused(),
       ring: Boolean(this.myPane()) && focused()?.pane === this.myPane(),
+      windowActive: window()?.active ?? null,
+      inputActive: Boolean(this.pendingNote),
       seq: this.seq,
       file: v ? `${v.section}:${v.path}${v.commit ? `@${v.commit.slice(0, 7)}` : ""}` : null,
       shown: viewIn(this.tab())?.path ?? null,
@@ -701,6 +729,7 @@ export default class GitDiff extends View {
   draw(cx) {
     const t = theme();
     this.renderLook();
+    if (!this.place.closesForHerdrNvim) restorePaneKeys(this, cx, () => this.keyboardTarget());
     const focused = this.handle.is_focused();
     const key = this.notesKey();
     // The body shows the shown file, or (just switched) the one before.
@@ -747,7 +776,7 @@ export default class GitDiff extends View {
       focused,
       composer: this.composer,
       pending: this.pendingNote,
-      uiFont: settings().ui_font ?? "Geist",
+      uiFont: settings().ui_font_family,
       // Sideways scrolling: how far the text is pushed left (the tint,
       // selection and cursor bar stay in the visible width).
       offsetX: this.scroll.left / (this.split ? 2 : 1),

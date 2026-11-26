@@ -114,6 +114,7 @@ pub fn visual_command(
     configured: Option<Vec<String>>,
     root: &Path,
     file: Option<&Path>,
+    line: Option<std::num::NonZeroUsize>,
 ) -> Result<Vec<String>> {
     let (mut argv, source) = match configured {
         Some(argv) => (argv, "visual_editor"),
@@ -146,7 +147,14 @@ pub fn visual_command(
     .ok_or_else(|| anyhow::anyhow!("{source} program not executable: {}", argv[0]))?;
     argv.push(root.to_string_lossy().into_owned());
     if let Some(file) = file {
-        argv.push(file.to_string_lossy().into_owned());
+        let editor = Path::new(&argv[0]);
+        let zed = editor.file_stem().is_some_and(|name| name == "zed")
+            || editor.ends_with("Zed.app/Contents/MacOS/cli");
+        if let Some(line) = line.filter(|_| zed) {
+            argv.push(format!("{}:{line}:1", file.display()));
+        } else {
+            argv.push(file.to_string_lossy().into_owned());
+        }
     }
     Ok(argv)
 }

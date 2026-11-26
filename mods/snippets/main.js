@@ -2,7 +2,17 @@ import { View, div } from "gpui-kit";
 import { Input, InputState, ScrollHandle, v_flex } from "gpui-base";
 import { appHome, checking, closeOverlay, exec, focused, props, readTextFile, terminals, theme } from "herdr";
 
-export function searchSnippets(files, query) {
+const RECENT_KEY = "recent-snippets.v1";
+
+function recentSnippets() {
+  try {
+    const names = JSON.parse(localStorage.getItem(RECENT_KEY));
+    return Array.isArray(names) ? names.filter(name => typeof name === "string") : [];
+  } catch { return []; }
+}
+
+export function searchSnippets(files, query, recent = []) {
+  const position = new Map(recent.map((name, index) => [name, index]));
   const needle = query.trim().toLowerCase();
   const letters = Array.from(needle);
   const matches = [];
@@ -23,7 +33,9 @@ export function searchSnippets(files, query) {
     }
     matches.push({ file, rank });
   }
-  return matches.sort((a, b) => a.rank - b.rank || a.file.localeCompare(b.file)).map(({ file }) => file);
+  return matches.sort((a, b) => a.rank - b.rank
+    || (position.get(a.file) ?? recent.length) - (position.get(b.file) ?? recent.length)
+    || a.file.localeCompare(b.file)).map(({ file }) => file);
 }
 
 export default class Snippets extends View {
@@ -67,7 +79,7 @@ export default class Snippets extends View {
   }
 
   filter() {
-    this.rows = searchSnippets(this.files, this.input.value());
+    this.rows = searchSnippets(this.files, this.input.value(), recentSnippets());
     this.selected = 0;
   }
 
@@ -101,6 +113,12 @@ export default class Snippets extends View {
         this.error = "Вставка не удалась. Проверь, открыт ли терминал и поддерживает ли он вставку текста.";
         return;
       }
+      // The paste already succeeded. A storage failure must not invite a second paste.
+      try {
+        const available = new Set(this.files);
+        const history = recentSnippets().filter(name => name !== file && available.has(name));
+        localStorage.setItem(RECENT_KEY, JSON.stringify([file, ...history]));
+      } catch { /* Recency is optional. */ }
       closeOverlay(this.overlay);
     } catch {
       this.error = "Не удалось вставить сниппет.";

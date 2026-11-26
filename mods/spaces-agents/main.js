@@ -1,32 +1,23 @@
 // Workspace spaces: stable colored avatars, worktrees under their checkout,
 // grouped by machine when more than one is known. After a space's name, the repo
-// its first terminal is in now, only where unusual: branch, ahead/behind. Agent state lives in the agents list, not here. Click to
+// its first terminal is in now, only where unusual: repo and branch. Agent state lives in the agents list, not here. Click to
 // switch, right-click for its menu, drag to reorder.
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, ScrollHandle } from "gpui-base";
 import { spaces, machines, panes, agents, terminals, focused, nextCommand, checking, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, layout } from "herdr";
 
-export function agentName(a, tabs = []) {
-  const tab = tabs.find(t => t.id === a.tab);
-  const program = a.program?.key;
-  const custom = (program === "codex" || program === "pi") && tab?.named && tab.name && tab.name !== a.program?.name;
-  const name = (custom ? tab.name : a.title || a.program?.name || a.address).replace(/^[^\p{L}\p{N}\p{Ps}\p{Pi}]+/u, "").replace(/^\[ [!.] \] /, "").trim() || a.address;
-  if (program === "pi" && !custom && name.startsWith("π - ")) {
-    const title = name.slice("π - ".length);
-    const separator = title.lastIndexOf(" - ");
-    return separator < 0 ? (a.program?.name || "Pi") : title.slice(0, separator);
-  }
-  return program === "codex" ? name.split(" | ")[0] || name : name;
+export function agentName(a) {
+  return a.pane_name || a.program?.name || a.app || a.address;
 }
-export function agentsForSpace(list, all, space, tabs = []) {
+export function agentsForSpace(list, all, space) {
   const children = new Set(all.filter(t => t.parent).map(t => t.address));
-  return list.filter(a => a.space === space && !children.has(a.address)).sort((a, b) => agentName(a, tabs).localeCompare(agentName(b, tabs)));
+  return list.filter(a => a.space === space && !children.has(a.address)).sort((a, b) => agentName(a).localeCompare(agentName(b)));
 }
 export function agentOrder(rows, list, all) {
   const names = [...new Set(rows.map(r => r.w.machine).filter(Boolean))].sort();
   return [null, ...names].flatMap(machine => rows.filter(r => (r.w.machine ?? null) === machine)
-    .flatMap(r => agentsForSpace(list, all, r.w.id, r.w.tabs).map(a => a.address)));
+    .flatMap(r => agentsForSpace(list, all, r.w.id).map(a => a.address)));
 }
 
 function find(node, id) {
@@ -86,7 +77,7 @@ export function tone(t, status) {
 
 export default class Spaces extends View {
   init(_props, cx) {
-    this.git = {}; // where() -> { name, branch, ahead, behind, repo, linked }, null: not a repo
+    this.git = {}; // where() -> { name, branch, repo, linked }, null: not a repo
     this.checked = {}; // where() -> when it was last looked at
     this.unsure = new Set(); // where()s git couldn't answer for (a machine away)
     this.pending = new Set(); // where()s to look at next
@@ -182,7 +173,7 @@ export default class Spaces extends View {
     return due;
   }
 
-  // `key` and the other places in its repo (a commit there moves their ahead/behind).
+  // `key` and the other places in its repo.
   sameRepo(key, keys) {
     const repo = this.git[key]?.repo;
     return [key, ...(repo ? [...keys].filter((k) => this.git[k]?.repo === repo) : [])];
@@ -261,7 +252,7 @@ export default class Spaces extends View {
     });
   }
 
-  // One place's git: branch, ahead/behind, its repo.
+  // One place's git: branch and its repo.
   async check(key, cx) {
     const [on, cwd] = JSON.parse(key);
     this.checked[key] = Date.now();
@@ -283,13 +274,9 @@ export default class Spaces extends View {
       }
       // The repo's own .git folder names it; a worktree's top differs from it.
       const top = r.stdout.replace(/\n$/, ""), repo = common.stdout.replace(/\n$/, "");
-      const [branch, counts] = await both(
-        exec("git", ["symbolic-ref", "-q", "HEAD"], { cwd, on }),
-        exec("git", ["rev-list", "--left-right", "--count", "HEAD...@{upstream}"], { cwd, on }),
-      );
+      const branch = await exec("git", ["symbolic-ref", "-q", "HEAD"], { cwd, on });
       const name = repo.endsWith("/.git") ? base(repo.slice(0, -5)) : base(repo).replace(/\.git$/, "");
-      const [ahead, behind] = counts.code === 0 ? counts.stdout.trim().split(/\s+/).map(Number) : [0, 0];
-      const info = { name, branch: branch.code === 0 ? branch.stdout.trim().replace(/^refs\/heads\//, "") : "(detached)", ahead, behind, repo: JSON.stringify([on, repo]), linked: repo !== `${top}/.git` };
+      const info = { name, branch: branch.code === 0 ? branch.stdout.trim().replace(/^refs\/heads\//, "") : "(detached)", repo: JSON.stringify([on, repo]), linked: repo !== `${top}/.git` };
       this.git[key] = info;
       if (!on) this.watch(repo, cx);
     } catch {
@@ -321,9 +308,9 @@ export default class Spaces extends View {
     });
   }
 
-  menu(w) {
+  menu(tab, target) {
     // A popup is as tall as its items; height is only the most.
-    openOverlay({ mod: "menu", kind: "popup", width: 200, height: 260, props: { tab: "space", target: { id: w.id } } });
+    openOverlay({ mod: "menu", kind: "popup", width: 200, height: 260, props: { tab, target } });
   }
 
   orderingDue(now) {
@@ -378,7 +365,7 @@ export default class Spaces extends View {
     const focus = focused();
     const draw = (r) => {
       if (collapsed) return this.compact(r, t);
-      const members = agentsForSpace(list, all, r.w.id, r.w.tabs);
+      const members = agentsForSpace(list, all, r.w.id);
       const open = !this.foldedAgents.has(r.w.id);
       const activeAgent = r.w.active && focus?.space === r.w.id ? focus.agent : null;
       return v_flex().flex_none().child(this.row(r, t, open)).when(open, el => el.children(members.map((a, index) =>
@@ -388,13 +375,14 @@ export default class Spaces extends View {
           .when(activeAgent === a.address, el => el.bg("#5b8def26"))
           .when(activeAgent !== a.address, el => el.hover(s => s.bg(t.hover)))
           .on_click(() => run("pane.focus", { pane: a.pane }))
+          .on_mouse_down("right", () => this.menu("pane", { pane: a.pane, terminal: a.address }))
           .child(div().id(`agent-tree-${a.address}`).absolute().left(r.tree ? 37 : 17).top(0)
             .bottom(index === members.length - 1 ? 13 : 0).w(1).bg(t.dim))
           .child(div().id(`agent-branch-${a.address}`).absolute().left(r.tree ? 37 : 17).top(13)
             .w(7).h(1).bg(t.dim))
           .child(div().size(7).flex_none().rounded(4).bg(t[a.status] ?? t.dim))
           .child(div().flex_1().min_w(0).truncate().text_size(12)
-            .text_color(activeAgent === a.address ? t.foreground : t.muted).child(agentName(a, r.w.tabs)))
+            .text_color(activeAgent === a.address ? t.foreground : t.muted).child(agentName(a)))
       )));
     };
     // Where the active space's row lands among the children this returns: the list scrolls by its direct
@@ -494,9 +482,7 @@ export default class Spaces extends View {
       .items_center()
       .text_size(11.5)
       .text_color(t.dim)
-      .when(Boolean(where), (el) => el.child(div().min_w(0).truncate().child(where)))
-      .when(g.ahead > 0, (el) => el.child(div().flex_none().text_color(t.ansi2).child(`\u2191${g.ahead}`)))
-      .when(g.behind > 0, (el) => el.child(div().flex_none().text_color(t.ansi1).child(`\u2193${g.behind}`)));
+      .when(Boolean(where), (el) => el.child(div().min_w(0).truncate().child(where)));
   }
 
   toggleAgents(id) {
@@ -551,7 +537,7 @@ export default class Spaces extends View {
         } else if (from === w.id) run("space.select", { id: w.id });
         cx.notify();
       })
-      .on_mouse_down("right", () => this.menu(w))
+      .on_mouse_down("right", () => this.menu("space", { id: w.id }))
       .child(
         h_flex()
           .gap(9)
@@ -587,6 +573,7 @@ export default class Spaces extends View {
       .when(w.active, (el) => el.bg(t.selected))
       .when(!w.active, (el) => el.hover((s) => s.bg(t.hover)))
       .on_click(() => run("space.select", { id: w.id }))
+      .on_mouse_down("right", () => this.menu("space", { id: w.id }))
       .child(div().text_color(w.active ? t.foreground : t.muted).child(String(i + 1)))
       .child(div().absolute().right(5).text_color(tone(t, w.status)).child(glyph(w.status))));
   }

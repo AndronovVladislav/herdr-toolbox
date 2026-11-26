@@ -71,10 +71,10 @@ export function knowEditor(root, on, cx) {
 export const editorLabel = (root, on) => editors.get(editorKey(root, on))?.editor?.name ?? "editor";
 
 // Open the worktree file externally, without touching the diff or terminal layout.
-export function openVisual({ root, on, path }, cx) {
+export function openVisual({ root, on, path, line }, cx) {
   cx.spawn(async () => {
     try {
-      const { argv } = await gv(["visual", "--repo", root, ...(path === undefined ? [] : ["--path", path]), ...onArgs(on)]);
+      const { argv } = await gv(["visual", "--repo", root, ...(path === undefined ? [] : ["--path", path]), ...(line > 0 ? ["--line", String(line)] : []), ...onArgs(on)]);
       const opened = await exec(argv[0], argv.slice(1));
       if (opened.code !== 0) throw new Error(opened.stderr?.trim() || `Editor exited with code ${opened.code}`);
     } catch (e) {

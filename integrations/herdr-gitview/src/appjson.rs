@@ -1093,7 +1093,12 @@ fn visual(a: &Args) -> Result<Value> {
     } else {
         None
     };
-    let argv = crate::editor::visual_command(config().visual_editor, &root, file.as_deref())?;
+    let line = a
+        .value("line")
+        .map(str::parse::<std::num::NonZeroUsize>)
+        .transpose()
+        .context("--line must be positive")?;
+    let argv = crate::editor::visual_command(config().visual_editor, &root, file.as_deref(), line)?;
     Ok(json!({ "argv": argv }))
 }
 
