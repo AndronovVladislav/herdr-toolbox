@@ -46,7 +46,7 @@
 //!
 //! Ops (exact usage):
 //!
-//! - `status --repo DIR [--scope worktree|branch] [--base LABEL --merge-base
+//! - `status --repo DIR [--scope worktree|trunk|parent|branch] [--base LABEL --merge-base
 //!   SHA --head SHA] [--ignore-submodules] [--on M]` → `{root, branch, head,
 //!   scope, sections: [{id, title, cached, files: [FILE]}], editor,
 //!   ignored_dirs, ignore_submodules}`; `head` is
@@ -476,7 +476,7 @@ struct StatusOut<'a> {
     /// The commit HEAD is at (`None` before the first commit), for the
     /// caller to pass back as `--head` with a branch-scope base.
     head: Option<String>,
-    scope: Scope,
+    scope: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     base: Option<BranchBase>,
     sections: Vec<SectionOut<'a>>,
@@ -542,7 +542,8 @@ struct DiffOut {
 fn status(a: &Args) -> Result<Value> {
     let repo = a.discover()?;
     let cfg = config();
-    if a.value("scope") == Some("branch") {
+    let scope = a.value("scope").unwrap_or("worktree");
+    if matches!(scope, "branch" | "trunk" | "parent") {
         let branch = repo.head_branch();
         let head = repo.head_sha();
         if head.is_none() {
@@ -561,7 +562,12 @@ fn status(a: &Args) -> Result<Value> {
                 }
             }
             _ => {
-                let (label, merge_base) = repo.resolve_base(&cfg.base)?;
+                let label = match scope {
+                    "trunk" => repo.default_base(),
+                    "parent" => repo.parent_base(),
+                    _ => cfg.base.clone(), // Legacy branch scope honors the configured override.
+                };
+                let (label, merge_base) = repo.resolve_base(&label)?;
                 BranchBase { label, merge_base }
             }
         };
@@ -570,7 +576,7 @@ fn status(a: &Args) -> Result<Value> {
             root: &repo.root,
             branch,
             head,
-            scope: Scope::Branch,
+            scope,
             base: Some(base.clone()),
             sections: vec![SectionOut::of(Section::Flat, &st)],
             editor: &cfg.editor,
@@ -588,7 +594,7 @@ fn status(a: &Args) -> Result<Value> {
         root: &repo.root,
         branch: st.branch.clone(),
         head: st.head.clone(),
-        scope: Scope::Worktree,
+        scope: "worktree",
         base: None,
         sections,
         editor: &cfg.editor,

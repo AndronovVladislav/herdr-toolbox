@@ -3,12 +3,13 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 
-const source = fs.readFileSync('mods/spaces-agents/main.js', 'utf8')
+const groups = fs.readFileSync('mods/spaces-agents/tab-groups.js', 'utf8').replace(/export /g, '');
+const source = groups + '\n' + fs.readFileSync('mods/spaces-agents/main.js', 'utf8')
   .replace(/^import .*;\n/gm, '').replace(/export default class/, 'class').replace(/export function /g, 'function ');
 const { agentsForSpace, agentName, agentOrder } = vm.runInNewContext(source + '\n({agentsForSpace, agentName, agentOrder})', { View: class {} });
 
 // A small view fake records styles without starting Herdr.
-function renderRows(active, tree = null, count = 1, activeSpace = 'one', focusSpace = activeSpace) {
+function renderRows(active, tree = null, count = 1, activeSpace = 'one', focusSpace = activeSpace, tabs = []) {
   const elements = [];
   const commands = [];
   const saved = {};
@@ -25,27 +26,74 @@ function renderRows(active, tree = null, count = 1, activeSpace = 'one', focusSp
     elements.push(styles);
     return node;
   }
-  const space = { id: 'one', name: 'Project', tabs: [], active: activeSpace === 'one' };
+  const space = { id: 'one', name: 'Project', tabs, active: activeSpace === 'one' };
   const empty = { id: 'empty', name: 'Empty', tabs: [], active: activeSpace === 'empty' };
   const Spaces = vm.runInNewContext(source + '\nSpaces', {
     View: class {}, h_flex: element, v_flex: element, div: element, svg: element,
     agents: () => Array.from({ length: count }, (_, index) => ({
       address: index ? `agent-${index}` : 'agent', pane: `pane-${index}`, space: 'one',
-      pane_name: index ? `Task ${index}` : 'Task', status: 'working',
+      tab: tabs[index]?.id, pane_name: index ? `Task ${index}` : 'Task', status: 'working',
     })),
     terminals: () => [], spaces: () => [space, empty], machines: () => [],
-    focused: () => focusSpace === null ? null : ({ agent: active, space: focusSpace }), shared: () => ({}),
+    focused: () => focusSpace === null ? null : ({ agent: active, space: focusSpace }), shared: key => saved[key] ?? {}, setShared: (key,value) => { saved[key] = value; },
     openOverlay: menu => commands.push(['menu', menu]), run: (...args) => commands.push(args), localStorage: { setItem: (key, value) => { saved[key] = value; } },
   });
   const view = new Spaces();
   Object.assign(view, {
     ordered: () => [{ w: space, i: 0, g: null, tree }, { w: empty, i: 1, g: null, tree: null }],
-    foldedAgents: new Set(), machines: [], reconnecting: {}, pressed: null, shown: new Set(['one', 'empty']),
+    foldedAgents: new Set(), foldedStash: new Set(), machines: [], reconnecting: {}, pressed: null, shown: new Set(['one', 'empty']),
   });
   view.grouped({ foreground: 'bright', muted: 'muted', dim: 'dim', accent: 'accent', selected: 'selected' }, false);
   Object.assign(elements, { view, commands, saved });
   return elements;
 }
+
+test('stash changes only group membership; focus does not restore and returning is explicit', () => {
+  const tabs = [{id:'other',active:false},{id:'review-task',active:true}];
+  const els = renderRows('agent-1',null,2,'one','one',tabs), cx = {stop_propagation(){},notify(){}};
+  const redraw = () => { els.length = 0; els.view.grouped({},false); };
+  const row = () => els.find(el=>el.id?.[0]==='agent-agent-1');
+  const actions = () => els.filter(el=>el.id?.[0]?.startsWith('stash-'));
+  assert.equal(actions().length,0);
+  row().on_hover[0](true,cx); redraw();
+  assert.deepEqual(actions().map(el=>el.child[0]),['↓']);
+  actions()[0].on_click[0]({},cx);
+  redraw(); row().on_hover[0](true,cx); redraw();
+  assert.deepEqual(actions().map(el=>el.child[0]),['↑']);
+  row().on_hover[0](false,cx); redraw(); assert.equal(actions().length,0);
+  const key='spaces-agents.stashed-tabs.v1';
+  assert.equal(els.saved[key]['review-task'],'one');
+  assert.equal(els.commands.at(-1)[0],'tab.select'); assert.equal(els.commands.at(-1)[1].id,'other');
+  els.find(el=>el.id?.[0]==='agent-agent-1').on_click[0]();
+  assert.equal(els.commands.at(-1)[0],'pane.focus'); assert.equal(els.saved[key]['review-task'],'one');
+  els.view.stashTab('one','review-task',false); assert.equal(els.saved[key]['review-task'],undefined);
+});
+
+test('stash disclosure hides rows, not membership or the active group', () => {
+  const tabs = [{id:'task',active:true}, {id:'hidden'}, {id:'shell',name:'Shell'}];
+  const els = renderRows('agent',null,2,'one','one',tabs);
+  const key = 'spaces-agents.stashed-tabs.v1';
+  const membership = {hidden:'one',shell:'one'};
+  els.saved[key] = membership;
+  const redraw = () => { els.length = 0; els.view.grouped({},false); };
+  const find = id => els.find(el => el.id?.[0] === id);
+  const click = () => find('space-stash-toggle-one').on_click[0]({}, {notify(){}});
+  redraw();
+  assert.ok(find('agent-agent-1'));
+  assert.ok(find('agent-shell'));
+  click(); redraw();
+  assert.ok(find('space-stash-toggle-one'));
+  assert.ok(find('agent-agent'));
+  assert.equal(find('agent-agent-1'),undefined);
+  assert.equal(find('agent-shell'),undefined);
+  assert.equal(els.saved['spaces-agents.folded-stash'],'["one"]');
+  assert.equal(els.saved[key],membership);
+  assert.deepEqual(els.commands,[]);
+  click(); redraw();
+  assert.ok(find('agent-agent-1'));
+  assert.ok(find('agent-shell'));
+  assert.equal(els.saved['spaces-agents.folded-stash'],'[]');
+});
 
 test('space_heading__stronger_than_agent__keeps_readable_text', () => {
   // Ожидание: название спейса полужирное, у группы есть отступ, а текст агента остаётся 12 px.

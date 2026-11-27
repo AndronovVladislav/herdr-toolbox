@@ -167,15 +167,27 @@ test("display columns: ASCII is one per code point, CJK / full-width / emoji are
   assert.equal(displayColumns("a\u{1f600}b"), 4);
 });
 
-test("widest row: the row with the most display columns, summed across its spans", () => {
+test("one very long span yields before finishing; a replaced diff stops measuring", async () => {
+  const text = "a".repeat(4093) + "😀界𝄞".repeat(30000);
+  const rows = [{ s: [[text]] }];
+  let turns = 0;
+  const pause = async () => { turns++; };
+  assert.equal(await widestColumns(rows, pause, () => true), 4093 + 5 * 30000);
+  assert.ok(turns > 1, "the whole span must not run in one JS turn");
+  turns = 0;
+  assert.equal(await widestColumns(rows, pause, () => !turns), null);
+  assert.equal(turns, 1);
+});
+
+test("widest row: the row with the most display columns, summed across its spans", async () => {
   const rows = [
     { s: [["short", null, null]] }, // 5
     { s: [["a", null, null], ["\u4e16\u754c", null, null]] }, // 1 + 4 = 5
     { s: [["0123456789", null, null]] }, // 10: the winner
     { k: "fold", s: [] }, // no text
   ];
-  assert.equal(widestColumns(rows), 10);
-  assert.equal(widestColumns([]), 0);
+  assert.equal(await widestColumns(rows), 10);
+  assert.equal(await widestColumns([]), 0);
 });
 
 // Round 10 (U1): the engine stops at 5 000 rows and said so; the pane just

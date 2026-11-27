@@ -10,8 +10,8 @@ import { run } from "./telemetry.js";
 import { appCli, gv } from "./engine.js"; // links to ../gitview (install copies them)
 import { location } from "./layout.js";
 import { oneShot } from "./modkit.js";
-import { origins, ownTab, setOrigin, setOwnSource, setOwnTab } from "./shared.js";
-import { closeEditorOf, setEditor } from "./editors.js";
+import { ownTab, setOrigin, setOwnSource, setOwnTab } from "./shared.js";
+import { closeCurrent } from "./close.js";
 
 const LIST_PERCENT = 29;
 
@@ -30,16 +30,7 @@ export default class GitviewTab extends View {
       const space = spaces().find((s) => s.id === f?.space);
       if (!space) return notify({ title: "gitview", body: "Open a space first.", level: "warning" });
       const own = ownTab(space.id);
-      if (own && own === f.tab) {
-        const back = origins()[space.id];
-        const close = [{ run: ["tab.close", { id: own, confirmed: true }] }, ...(back && space.tabs.some((t) => t.id === back) ? [{ run: ["tab.select", { id: back }] }] : [])];
-        // Its editor closes with it (v1): clean, it quits; unsaved, the
-        // question first (Cancel keeps the tab and the editor).
-        if ((await closeEditorOf(own, { after: close })) === "dirty") return;
-        setEditor(own, null);
-        for (const s of close) run(s.run[0], s.run[1]);
-        return;
-      }
+      if (own && own === f.tab) return closeCurrent(space.id, own);
       setOrigin(space.id, f.tab);
       const source = location(null, f);
       if (own) {
@@ -62,6 +53,7 @@ export default class GitviewTab extends View {
         if (!tab) await cx.sleep(500);
       }
       if (!tab) throw new Error("the gitview tab didn't open");
+      setOwnSource(space.id, tab, source);
       setOwnTab(space.id, tab);
       const props = JSON.stringify({ ...source, space: space.id, tab, own: true });
       // Right after it shows up, the window may not have the tab's panes

@@ -55,7 +55,7 @@ export class History {
 // ---- what the list does in it (v: the list's view) ---------------------
 
 export function openLog(v, cx) {
-  v.setMode("log", cx, { history: new History(v.scope === "branch") });
+  v.setMode("log", cx, { history: new History(v.scope !== "worktree") });
 }
 
 export function loadLog(v, cx) {
