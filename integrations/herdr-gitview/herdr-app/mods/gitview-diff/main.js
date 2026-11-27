@@ -273,7 +273,7 @@ export default class GitDiff extends View {
   loadDiff(cx, { keep, line = null, quiet = false }) {
     const asked = this.asked;
     this.asked = asked ? { keep: asked.keep && keep, line: line ?? asked.line } : { keep, line };
-    this.loads.latest(cx, "diff", async () => {
+    this.loads.latest(cx, "diff", async (cx) => {
       const view = this.view;
       const { keep, line } = this.asked ?? { keep: true, line: null };
       this.asked = null;
@@ -291,6 +291,7 @@ export default class GitDiff extends View {
         if (sameFile(this.view, view) && !sameFile(this.diffView, view)) {
           this.resetScroll(); // another file (its load failed): don't keep the old one's sideways offset
           this.diff = { rows: [], error: message(e) }; // said in the body, after the flash too
+          this.maxCols = 0;
           this.diffView = view;
         }
         throw e;
@@ -302,6 +303,15 @@ export default class GitDiff extends View {
       // row numbers, which move when lines come or go above them.
       const keepLines = keep && !line && !another ? { cursor: this.lineKey(this.cursor), anchor: this.lineKey(this.anchor), offset: this.rowOffset(this.cursor) } : null;
       this.diff = diff;
+      if (another) this.maxCols = 0;
+      cx.spawn(async (cx) => {
+        const current = () => this.diff === diff;
+        if (!current()) return;
+        const cols = await diffs.widestColumns(diff.rows, () => cx.sleep(1), current);
+        if (cols === null || !current()) return;
+        this.maxCols = cols;
+        this.sizeContent(cx);
+      });
       this.diffView = view;
       this.lastBody = "diff";
       const n = diff.rows.length;
@@ -746,9 +756,7 @@ export default class GitDiff extends View {
       this.display = this.split ? diffs.splitRows(this.diff, this.splitModel(), notes, dispKey[2])
         : diffs.displayRows(this.diff, notes, dispKey[2]);
       this.scroll.measure(this.display.map(diffs.rowSize));
-      // The sideways range from the data: recomputed each time the diff
-      // changes, so it shrinks after a reload or a smaller font too.
-      this.maxCols = diffs.widestColumns(this.diff.rows);
+      // Width is measured once per loaded diff, never as part of a redraw.
       this.sizeContent();
       this.dispKey = dispKey;
     }

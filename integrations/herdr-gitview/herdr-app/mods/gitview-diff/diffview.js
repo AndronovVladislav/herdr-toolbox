@@ -174,6 +174,7 @@ function glyphColumns(cp) {
 // The display columns of a string: each code point's glyph columns summed.
 export function displayColumns(text) {
   let n = 0;
+  if (!/[^\u0000-\u10ff]/.test(text)) return text.length;
   for (const ch of text) n += glyphColumns(ch.codePointAt(0));
   return n;
 }
@@ -182,11 +183,26 @@ export function displayColumns(text) {
 // sideways range is built from, straight from the data (tabs reach the
 // spans already expanded to spaces, so a code-point count is exact for
 // them). Folds and empty rows count 0.
-export function widestColumns(rows) {
-  let max = 0;
+export async function widestColumns(rows, pause, current) {
+  // Bound each host turn, even for a single giant span or thousands of empty spans.
+  const budget = 4096;
+  let left = budget, max = 0;
   for (const row of rows) {
+    if (--left <= 0) { await pause(); if (!current()) return null; left = budget; }
     let cols = 0;
-    for (const [text] of row.s ?? []) cols += displayColumns(text);
+    for (const [text] of row.s ?? []) {
+      let start = 0;
+      do {
+        if (--left <= 0) { await pause(); if (!current()) return null; left = budget; }
+        let end = Math.min(start + left, text.length);
+        // Do not split a UTF-16 surrogate pair between measurement slices.
+        if (end < text.length && text.charCodeAt(end - 1) >= 0xd800 && text.charCodeAt(end - 1) <= 0xdbff
+            && text.charCodeAt(end) >= 0xdc00 && text.charCodeAt(end) <= 0xdfff) end++;
+        cols += displayColumns(start === 0 && end === text.length ? text : text.slice(start, end));
+        left -= end - start;
+        start = end;
+      } while (start < text.length);
+    }
     if (cols > max) max = cols;
   }
   return max;

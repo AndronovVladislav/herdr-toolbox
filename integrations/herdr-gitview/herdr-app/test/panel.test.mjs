@@ -29,6 +29,14 @@ test("o in an empty list opens just its worktree in the configured editor", asyn
   assert.deepEqual(calls[1], ["editor", [root]]);
 });
 
+test("w cycles through default and parent comparisons before returning to worktree", () => {
+  const list = new GitList(), seen = [];
+  Object.assign(list, { scope: "worktree", setMode() {}, refresh() { seen.push(this.scope); } });
+  const press = MODES.files.keys.find(key => key.on.w).on.w;
+  for (let i = 0; i < 3; i++) press(list, {});
+  assert.deepEqual(seen, ["trunk", "parent", "worktree"]);
+});
+
 const A = { id: "spA", active: true, tabs: [{ id: "t1" }, { id: "t2" }] };
 const B = { id: "spB", active: false, tabs: [{ id: "t3" }] };
 // A layout whose changes slot shows gitview, open or hidden.

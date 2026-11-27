@@ -503,6 +503,30 @@ fn commit_hooks_keep_their_own_globs() {
 }
 
 #[test]
+fn stacked_comparisons_use_distinct_bases() {
+    let repo = fixture("json-stacked");
+    let dir = &repo.dir;
+    for (branch, path) in [("feature-A", "a.txt"), ("feature-B", "b.txt")] {
+        common::git(dir, &["checkout", "-qb", branch]);
+        write(dir, path, "new\n");
+        common::git(dir, &["add", path]);
+        common::git(dir, &["commit", "-qm", branch]);
+    }
+    // Move the parent forward so its tip is no longer an ancestor of B.
+    common::git(dir, &["checkout", "-q", "feature-A"]);
+    write(dir, "later.txt", "later\n");
+    common::git(dir, &["add", "later.txt"]);
+    common::git(dir, &["commit", "-qm", "advance A"]);
+    common::git(dir, &["checkout", "-q", "feature-B"]);
+    let trunk = gv(dir, &["status", "--scope", "trunk"]);
+    let parent = gv(dir, &["status", "--scope", "parent"]);
+    assert_eq!(trunk["base"]["label"], "main");
+    assert_eq!(parent["base"]["label"], "feature-A");
+    assert_eq!(section(&trunk, "branch"), ["a.txt", "b.txt"]);
+    assert_eq!(section(&parent, "branch"), ["b.txt"]);
+}
+
+#[test]
 fn status_carries_only_what_the_mods_read_and_takes_a_base_from_the_caller() {
     let repo = fixture("json-trim");
     common::git(&repo.dir, &["checkout", "-q", "-b", "feature"]);

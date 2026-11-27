@@ -7,6 +7,10 @@ import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, ScrollHandle } from "gpui-base";
 import { spaces, machines, panes, agents, terminals, focused, nextCommand, checking, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, layout } from "herdr";
 
+import { STASH, tabGroups } from "./tab-groups.js";
+
+const FOLDED_STASH = "spaces-agents.folded-stash";
+
 export function agentName(a) {
   return a.pane_name || a.program?.name || a.app || a.address;
 }
@@ -35,7 +39,7 @@ const narrow = () => (find(layout(), "sidebar")?.size?.px ?? Infinity) < 160;
 // Where a space is now: its first terminal's live folder, else where it was made.
 // `ps`: panes(), read once by the caller (each read copies every pane).
 function place(s, ps) {
-  const tabs = new Set((s.tabs ?? []).map((c) => c.id));
+  const tabs = new Set(tabGroups(s, shared).visible.map(c => c.id));
   return ps.find((p) => tabs.has(p.tab) && p.cwd)?.cwd || s.folder;
 }
 const rowHeight = ({ tree }) => (tree ? 28 : 30);
@@ -101,12 +105,20 @@ export default class Spaces extends View {
     } catch { this.reconnecting = {}; }
     try { this.folded = new Set(JSON.parse(localStorage.getItem("machines.folded") ?? "[]")); } catch { this.folded = new Set(); }
     try { this.foldedAgents = new Set(JSON.parse(localStorage.getItem("spaces-agents.folded") ?? "[]")); } catch { this.foldedAgents = new Set(); }
+    try { this.foldedStash = new Set(JSON.parse(localStorage.getItem(FOLDED_STASH) ?? "[]")); } catch { this.foldedStash = new Set(); }
     this.refreshMachines(cx);
     if (!checking()) cx.spawn(async cx => {
       for (;;) {
         const command = await nextCommand();
+        if (command === "stash" || command === "restore") {
+          const f = focused();
+          if (f?.tab) this.stashTab(f.space,f.tab,command === "stash");
+          continue;
+        }
         if (command !== "next" && command !== "prev") continue;
-        const order = agentOrder(this.ordered(), agents(), terminals());
+        const sp = spaces(), away = tabGroups(sp.find(s => s.active), shared).away;
+        const visible = agents().filter(a => tabGroups(sp.find(s => s.id === a.space), shared).hidden(a.tab) === away);
+        const order = agentOrder(this.ordered(), visible, terminals());
         if (!order.length) continue;
         const index = order.indexOf(focused()?.agent);
         const next = index < 0 ? (command === "next" ? 0 : order.length - 1)
@@ -308,6 +320,24 @@ export default class Spaces extends View {
     });
   }
 
+  stashTab(spaceId, tabId, putAway) {
+    const space = spaces().find(s => s.id === spaceId);
+    if (!space?.tabs.some(t => t.id === tabId)) return;
+    const groups = tabGroups(space, shared);
+    if (tabId === groups.review || groups.hidden(tabId) === putAway) return;
+    const saved = {...(shared(STASH) || {})};
+    for (const [id, owner] of Object.entries(saved)) {
+      if (owner === spaceId && !space.tabs.some(t => t.id === id)) delete saved[id];
+    }
+    if (putAway) saved[tabId] = spaceId; else delete saved[tabId];
+    this.hoverAgent = null;
+    setShared(STASH, saved);
+    if (putAway && space.active && groups.current === tabId) {
+      const next = space.tabs.find(t => !t.settled && t.id !== groups.review && saved[t.id] !== spaceId);
+      if (next) run("tab.select", {id:next.id});
+    }
+  }
+
   menu(tab, target) {
     // A popup is as tall as its items; height is only the most.
     openOverlay({ mod: "menu", kind: "popup", width: 200, height: 260, props: { tab, target } });
@@ -368,22 +398,55 @@ export default class Spaces extends View {
       const members = agentsForSpace(list, all, r.w.id);
       const open = !this.foldedAgents.has(r.w.id);
       const activeAgent = r.w.active && focus?.space === r.w.id ? focus.agent : null;
-      return v_flex().flex_none().child(this.row(r, t, open)).when(open, el => el.children(members.map((a, index) =>
+      const groups = tabGroups(r.w,shared);
+      const agentRow = (a,index,group) =>
         h_flex().id(`agent-${a.address}`).relative().h(26).pl(r.tree ? 48 : 26).pr(8).gap(8)
           .items_center().rounded(7)
           .cursor_pointer()
+          .on_hover((over,cx) => {
+            if (!over && this.hoverAgent !== a.address) return;
+            this.hoverAgent = over ? a.address : null;
+            cx.notify();
+          })
           .when(activeAgent === a.address, el => el.bg("#5b8def26"))
           .when(activeAgent !== a.address, el => el.hover(s => s.bg(t.hover)))
-          .on_click(() => run("pane.focus", { pane: a.pane }))
-          .on_mouse_down("right", () => this.menu("pane", { pane: a.pane, terminal: a.address }))
+          .on_click(() => a.pane ? run("pane.focus", { pane: a.pane }) : run("tab.select", {id:a.tab}))
+          .on_mouse_down("right", () => a.pane ? this.menu("pane", { pane: a.pane, terminal: a.address }) : this.menu("tab", {id:a.tab, space:r.w.id}))
           .child(div().id(`agent-tree-${a.address}`).absolute().left(r.tree ? 37 : 17).top(0)
-            .bottom(index === members.length - 1 ? 13 : 0).w(1).bg(t.dim))
+            .bottom(index === group.length - 1 ? 13 : 0).w(1).bg(t.dim))
           .child(div().id(`agent-branch-${a.address}`).absolute().left(r.tree ? 37 : 17).top(13)
             .w(7).h(1).bg(t.dim))
           .child(div().size(7).flex_none().rounded(4).bg(t[a.status] ?? t.dim))
           .child(div().flex_1().min_w(0).truncate().text_size(12)
             .text_color(activeAgent === a.address ? t.foreground : t.muted).child(agentName(a)))
-      )));
+          .when(this.hoverAgent === a.address && Boolean(a.tab) && groups.review !== a.tab, el => el.child(div().id(`stash-${a.address}`).w(22).h(22).flex().items_center().justify_center().rounded(4)
+            .tooltip(groups.hidden(a.tab) ? "Вернуть вкладку в активные" : "Припрятать вкладку целиком")
+            .hover(s => s.bg(t.hover)).on_mouse_down("left", (_e,cx) => cx.stop_propagation())
+            .on_click((_e,cx) => { cx.stop_propagation(); this.stashTab(r.w.id,a.tab,!groups.hidden(a.tab)); })
+            .child(groups.hidden(a.tab) ? "↑" : "↓")));
+      const active = members.filter(a => !groups.hidden(a.tab)), hidden = members.filter(a => groups.hidden(a.tab));
+      // An agent may exit back to its shell. Its tab must remain reachable and restorable.
+      for (const tab of r.w.tabs || []) if (groups.hidden(tab.id) && tab.id !== groups.review && !hidden.some(a => a.tab === tab.id)) {
+        hidden.push({address:tab.id, tab:tab.id, pane_name:tab.name || "Terminal"});
+      }
+      const heading = text => div().pl(r.tree ? 40 : 17).text_size(11).text_color(t.dim).child(text);
+      const folded = this.foldedStash.has(r.w.id);
+      return v_flex().flex_none().child(this.row(r,t,open)).when(open, el => el
+        .when(hidden.length > 0, row => row.child(heading("Активные")))
+        .children(active.map(agentRow))
+        .when(hidden.length > 0, row => row.child(h_flex().id(`space-stash-toggle-${r.w.id}`)
+          .pl(r.tree ? 40 : 17).h(24).gap(6).items_center().rounded(7).text_size(11).text_color(t.dim)
+          .cursor_pointer().hover(s => s.bg(t.hover))
+          .tooltip(folded ? "Показать припрятанные" : "Свернуть припрятанные")
+          .on_click((_e, cx) => {
+            if (folded) this.foldedStash.delete(r.w.id);
+            else this.foldedStash.add(r.w.id);
+            localStorage.setItem(FOLDED_STASH, JSON.stringify([...this.foldedStash]));
+            cx.notify();
+          })
+          .child(svg(`mods/workspace-chrome/chevron-${folded ? "right" : "down"}.svg`).size(11).flex_none())
+          .child("Припрятанные"))
+          .when(!folded, group => group.children(hidden.map(agentRow)))));
     };
     // Where the active space's row lands among the children this returns: the list scrolls by its direct
     // children, and machine headers, login notes and loading rows count too.

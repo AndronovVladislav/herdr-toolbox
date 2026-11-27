@@ -93,7 +93,7 @@ function bar(t) {
 // The changed files: {status, files, notes, loading, wide, tree, onNotes, onTree, onLog}.
 export function filesHeader(t, h) {
   const s = h.status;
-  const what = !s ? "gitview" : s.scope === "branch" ? `vs ${s.base?.label ?? "base"}` : "uncommitted";
+  const what = !s ? "gitview" : s.base ? `${s.scope === "parent" ? "vs parent:" : "vs"} ${s.base.label}` : "uncommitted";
   return bar(t)
     .child(div().flex_none().font_semibold().child(what))
     .child(
@@ -102,7 +102,8 @@ export function filesHeader(t, h) {
         .min_w(0)
         .gap(4)
         .items_center()
-        .when(Boolean(s?.branch), (e) => e.child(icon("branch", 12, t.dim)).child(div().min_w(0).truncate().text_size(12).text_color(t.muted).child(s.branch))),
+        .id("gitview-worktree-picker").cursor_pointer().tooltip("Choose worktree (Shift+W)").on_click(h.onWorktree)
+        .child(icon("branch", 12, t.dim)).child(div().min_w(0).truncate().text_size(12).text_color(t.muted).child(s?.branch || "Worktree")),
     )
     .when(h.notes > 0, (e) => e.child(pill(t, `${h.notes} note${h.notes > 1 ? "s" : ""}`, { accent: true, id: "gitview-notes-pill", onPress: h.onNotes })))
     .children(lineCounts(t, h.add, h.del))

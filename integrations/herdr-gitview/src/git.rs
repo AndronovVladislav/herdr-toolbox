@@ -456,9 +456,51 @@ impl Repo {
     /// origin/HEAD → origin/main → origin/master → main → master. Last
     /// resort: "HEAD".
     pub fn detect_base(&self) -> String {
-        if let Some(fork) = self.detect_fork_base() {
-            return fork;
-        }
+        self.detect_fork_base()
+            .unwrap_or_else(|| self.default_base())
+    }
+
+    /// Prefer the checkout recorded at creation: its tip may have moved since the fork.
+    /// Reflogs can be absent (another clone or worktree), so keep the graph fallback.
+    pub fn parent_base(&self) -> String {
+        self.recorded_parent().unwrap_or_else(|| self.detect_base())
+    }
+
+    fn recorded_parent(&self) -> Option<String> {
+        let branch = self.head_branch()?;
+        let branch_ref = format!("refs/heads/{branch}");
+        let log = |name: &str| {
+            self.git(&["reflog", "show", "-n", "256", "--format=%H%x09%gs", name])
+                .ok()
+                .map(|out| String::from_utf8_lossy(&out).into_owned())
+        };
+        let history = log(&branch_ref)?;
+        let (sha, message) = history.lines().last()?.split_once('\t')?;
+        let from = message.strip_prefix("branch: Created from ")?;
+        let head_log;
+        let from = if from == "HEAD" {
+            head_log = log("HEAD")?;
+            head_log.lines().rev().find_map(|line| {
+                let (id, message) = line.split_once('\t')?;
+                let (from, to) = message
+                    .strip_prefix("checkout: moving from ")?
+                    .split_once(" to ")?;
+                (id == sha && to == branch).then_some(from)
+            })?
+        } else {
+            from
+        };
+        let name = from
+            .strip_prefix("refs/heads/")
+            .or_else(|| from.strip_prefix("refs/remotes/"))
+            .unwrap_or(from);
+        (name != branch
+            && !is_own_branch(name, Some(&branch), &self.remotes())
+            && self.ref_names().contains(name))
+        .then(|| name.to_owned())
+    }
+
+    pub fn default_base(&self) -> String {
         if let Ok(out) = self.git_lenient(&["symbolic-ref", "refs/remotes/origin/HEAD"])
             && out.status.success()
         {

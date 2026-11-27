@@ -13,7 +13,7 @@
 
 import { View, div } from "gpui-kit";
 import { v_flex, TextareaState } from "gpui-base";
-import { focused, notify, panes, props, shared, theme, window } from "herdr";
+import { focused, notify, openOverlay, panes, props, shared, theme, window } from "herdr";
 import { Tracer, event, run } from "./telemetry.js";
 import { endTerminal, gv, labelled, message, onArgs, verifyWorktree } from "./engine.js";
 import { diffArgs, isDark, sameFile, sameShown } from "./model.js";
@@ -535,7 +535,7 @@ export default class GitList extends View {
       const started = Date.now();
       this.statusAt = started;
       const old = this.work;
-      const base = poll && this.scope === "branch" && this.loadedKey === ctx.key ? old?.where.base : null;
+      const base = poll && this.scope !== "worktree" && this.loadedKey === ctx.key ? old?.where.base : null;
       const known = base ? ["--base", base.label, "--merge-base", base.merge_base, ...(old.status.head ? ["--head", old.status.head] : [])] : [];
       let status;
       try {
@@ -941,8 +941,14 @@ export default class GitList extends View {
     return Boolean(this.committing) && Date.now() - this.committing < EXEC_LIMIT_MS + 1000;
   }
 
+  pickWorktree() {
+    const source = this.context();
+    if (!source.terminal || (!source.cwd && !source.pinned)) return this.flash.set(source.problem || "Select a source terminal first");
+    openOverlay({mod:"gitview-worktrees", kind:"dialog", modal:true, width:590, height:400, props:{source}});
+  }
+
   toggleScope(cx) {
-    this.scope = this.scope === "worktree" ? "branch" : "worktree";
+    this.scope = this.scope === "worktree" ? "trunk" : this.scope === "trunk" ? "parent" : "worktree";
     this.setMode("files", cx);
     this.refresh(cx);
   }

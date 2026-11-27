@@ -6,7 +6,8 @@
 
 import { View, div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { agents, closeOverlay, nextCommand, notify, props, theme } from "herdr";
+import { tabGroups } from "./tab-groups.js";
+import { agents, closeOverlay, focused, nextCommand, notify, props, shared, spaces, theme } from "herdr";
 import { gv } from "./engine.js"; // links to ../gitview (install copies them)
 import { removeNotes } from "./shared.js";
 
@@ -39,7 +40,8 @@ export default class SendNotes extends View {
 
   list() {
     const space = this.given?.space;
-    const all = agents();
+    const sp = spaces(), lane = tabGroups(sp.find(s => s.id === (space || focused()?.space)), shared);
+    const all = agents().filter(a => tabGroups(sp.find(s => s.id === a.space),shared).hidden(a.tab) === lane.away);
     return [...all.filter((a) => a.space === space), ...all.filter((a) => a.space !== space)];
   }
 
